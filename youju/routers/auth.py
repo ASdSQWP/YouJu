@@ -16,6 +16,7 @@ from youju.deps import COOKIE_NAME, resolve_user
 from youju.models import SessionToken, User
 from youju.security import digest, hash_password, login_limiter, new_token, verify_password
 from youju.seed import seed_demo
+from youju.vision.seed import seed_vision
 from youju.serial import user_public
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -78,6 +79,7 @@ def setup(body: SetupBody, response: Response, db: Session = Depends(get_db)):
     db.commit()
     if body.seed_demo:
         seed_demo(db, user)
+        seed_vision(db, user)
     open_session(db, response, user)
     return {"user": user_public(user)}
 

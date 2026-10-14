@@ -231,3 +231,62 @@ class EvalRun(Base):
     details: Mapped[Any] = mapped_column(JSON, default=list)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class VisionSource(Base):
+    __tablename__ = "vision_sources"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(80), index=True)
+    code: Mapped[str] = mapped_column(String(64), default="")
+    kind: Mapped[str] = mapped_column(String(16), default="demo")
+    uri: Mapped[str] = mapped_column(String(500), default="")
+    scenario: Mapped[str] = mapped_column(String(32), default="")
+    status: Mapped[str] = mapped_column(String(16), default="idle", index=True)
+    filename: Mapped[str] = mapped_column(String(255), default="")
+    mime: Mapped[str] = mapped_column(String(64), default="")
+    extra: Mapped[Any] = mapped_column(JSON, default=dict)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    live_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class DetectionRule(Base):
+    __tablename__ = "detection_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    instruction: Mapped[str] = mapped_column(Text, default="")
+    source_id: Mapped[int | None] = mapped_column(ForeignKey("vision_sources.id", ondelete="SET NULL"), nullable=True, index=True)
+    algorithms: Mapped[Any] = mapped_column(JSON, default=list)
+    confidence: Mapped[float] = mapped_column(Float, default=0.55)
+    cooldown_sec: Mapped[int] = mapped_column(Integer, default=20)
+    level: Mapped[str] = mapped_column(String(16), default="medium")
+    detector: Mapped[str] = mapped_column(String(16), default="small")
+    agent_id: Mapped[int | None] = mapped_column(ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    auto_push: Mapped[bool] = mapped_column(Boolean, default=True)
+    auto_pull: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class DetectionAlert(Base):
+    __tablename__ = "detection_alerts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("vision_sources.id", ondelete="CASCADE"), index=True)
+    rule_id: Mapped[int | None] = mapped_column(ForeignKey("detection_rules.id", ondelete="SET NULL"), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    level: Mapped[str] = mapped_column(String(16), default="medium")
+    findings: Mapped[Any] = mapped_column(JSON, default=list)
+    boxes: Mapped[Any] = mapped_column(JSON, default=list)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    detector: Mapped[str] = mapped_column(String(16), default="small")
+    tick: Mapped[int] = mapped_column(Integer, default=0)
+    event_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)

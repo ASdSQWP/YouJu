@@ -91,3 +91,71 @@ def event_public(ev, agent=None, brief: bool = False) -> dict:
             }
         )
     return data
+
+
+def source_public(src, boxes=None, tick=0) -> dict:
+    extra = src.extra or {}
+    return {
+        "id": src.id,
+        "name": src.name,
+        "code": src.code,
+        "kind": src.kind,
+        "uri": src.uri,
+        "scenario": src.scenario,
+        "status": src.status,
+        "filename": src.filename,
+        "mime": src.mime,
+        "live": src.status == "live",
+        "tick": tick,
+        "boxes": boxes or [],
+        "last_error": src.last_error,
+        "live_started_at": iso(src.live_started_at),
+        "created_at": iso(src.created_at),
+        "media_url": f"/api/vision/sources/{src.id}/media" if src.kind == "file" else "",
+        "frame_url": f"/api/vision/sources/{src.id}/frame",
+        "preview_kind": extra.get("preview") or ("video" if (src.mime or "").startswith("video/") else "image" if src.kind == "file" else "demo"),
+    }
+
+
+def rule_public(rule, source=None, agent=None) -> dict:
+    return {
+        "id": rule.id,
+        "name": rule.name,
+        "instruction": rule.instruction,
+        "source_id": rule.source_id,
+        "source_name": source.name if source else "",
+        "algorithms": list(rule.algorithms or []),
+        "confidence": rule.confidence,
+        "cooldown_sec": rule.cooldown_sec,
+        "level": rule.level,
+        "detector": rule.detector,
+        "agent_id": rule.agent_id,
+        "agent_name": agent.name if agent else "",
+        "agent_emoji": agent.emoji if agent else "",
+        "enabled": rule.enabled,
+        "auto_push": rule.auto_push,
+        "auto_pull": rule.auto_pull,
+        "created_at": iso(rule.created_at),
+        "updated_at": iso(rule.updated_at),
+    }
+
+
+def alert_public(alert, source=None, rule=None) -> dict:
+    return {
+        "id": alert.id,
+        "source_id": alert.source_id,
+        "source_name": source.name if source else "",
+        "source_code": source.code if source else "",
+        "rule_id": alert.rule_id,
+        "rule_name": rule.name if rule else "",
+        "title": alert.title,
+        "level": alert.level,
+        "findings": list(alert.findings or []),
+        "boxes": list(alert.boxes or []),
+        "confidence": alert.confidence,
+        "detector": alert.detector,
+        "tick": alert.tick,
+        "event_id": alert.event_id,
+        "status": alert.status,
+        "created_at": iso(alert.created_at),
+    }

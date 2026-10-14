@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 
+import httpx
+
 from youju.providers import http
 from youju.providers.base import (
     ProviderError,
@@ -103,34 +105,89 @@ class OpenAICompatProvider:
         if self.stream_usage:
             body["stream_options"] = {"include_usage": True}
 
-        async with http.async_client() as client:
-            for attempt in range(3):
-                async with client.stream(
-                    "POST", f"{self.base_url}/chat/completions", json=body, headers=self.headers()
-                ) as resp:
-                    if resp.status_code >= 400:
-                        raw = await resp.aread()
-                        if attempt < 2 and resp.status_code == 400 and _drop_rejected(body, raw):
-                            continue
-                        raise error_from_response(resp.status_code, raw)
-                    ctype = resp.headers.get("content-type", "")
-                    if "event-stream" not in ctype and "json" in ctype:
-                        payload = json.loads(await resp.aread())
-                        for part in _from_completion(payload):
+        url = f"{self.base_url}/chat/completions"
+        try:
+            async with http.async_client() as client:
+                for attempt in range(3):
+                    async with client.stream("POST", url, json=body, headers=self.headers()) as resp:
+                        if resp.status_code >= 400:
+                            raw = await resp.aread()
+                            if attempt < 2 and resp.status_code == 400 and _drop_rejected(body, raw):
+                                continue
+                            if resp.status_code in (404, 400) and _looks_missing_model(raw, model):
+                                raise await self._missing_model(model, resp.status_code, raw)
+                            if resp.status_code == 502 and _is_loopback(self.base_url):
+                                raise ProviderError(
+                                    f"访问 {self.base_url} 返回 502，通常是系统代理劫持了本机地址。"
+                                    "请重启有据后再试，或把 127.0.0.1 加入代理旁路。",
+                                    status=502,
+                                )
+                            raise error_from_response(resp.status_code, raw)
+                        ctype = resp.headers.get("content-type", "")
+                        if "event-stream" not in ctype and "json" in ctype:
+                            payload = json.loads(await resp.aread())
+                            for part in _from_completion(payload):
+                                yield part
+                            return
+                        async for part in _from_stream(resp):
                             yield part
                         return
-                    async for part in _from_stream(resp):
-                        yield part
-                    return
+        except ProviderError:
+            raise
+        except httpx.ConnectError as exc:
+            raise ProviderError(
+                f"连不上 {self.base_url}。本地 Ollama 需要先启动（命令行执行 ollama serve），"
+                "并确认设置里的模型名和 `ollama list` 完全一致。",
+                status=None,
+            ) from exc
+        except httpx.ProxyError as exc:
+            raise ProviderError(
+                f"请求被系统代理拦截，无法访问 {self.base_url}。本地模型请把 127.0.0.1 加入代理旁路。",
+                status=502,
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise ProviderError(f"调用 {model} 超时，模型可能正在加载，请稍后重试。") from exc
 
     async def list_models(self) -> list[str]:
-        async with http.async_client() as client:
-            resp = await client.get(f"{self.base_url}/models", headers=self.headers())
+        try:
+            async with http.async_client() as client:
+                resp = await client.get(f"{self.base_url}/models", headers=self.headers())
+        except httpx.ConnectError as exc:
+            raise ProviderError(f"连不上 {self.base_url}，请确认 Ollama 已启动。") from exc
+        except httpx.ProxyError as exc:
+            raise ProviderError(f"系统代理拦截了 {self.base_url}。") from exc
         if resp.status_code >= 400:
             raise error_from_response(resp.status_code, resp.content)
         data = resp.json()
         items = data.get("data") if isinstance(data, dict) else data
         return sorted({str(item["id"]) for item in items or [] if isinstance(item, dict) and item.get("id")})
+
+    async def _missing_model(self, model: str, status: int, raw: bytes) -> ProviderError:
+        installed = []
+        try:
+            installed = await self.list_models()
+        except Exception:  # noqa: BLE001
+            pass
+        if installed:
+            shown = "、".join(installed[:8])
+            extra = f" 等 {len(installed)} 个" if len(installed) > 8 else ""
+            return ProviderError(
+                f"Ollama 里没有「{model}」。当前已安装：{shown}{extra}。"
+                "请打开「设置 → 模型服务」，点「从接口获取」勾选实际模型名。",
+                status=status,
+            )
+        return error_from_response(status, raw)
+
+
+def _is_loopback(url: str) -> bool:
+    host = (url or "").lower()
+    return any(token in host for token in ("127.0.0.1", "localhost", "[::1]", "0.0.0.0"))
+
+
+def _looks_missing_model(raw: bytes, model: str) -> bool:
+    text = raw.decode("utf-8", "replace").lower()
+    name = (model or "").lower()
+    return "not found" in text or "does not exist" in text or (name and name in text and "model" in text)
 
 
 def _drop_rejected(body: dict, raw: bytes) -> bool:

@@ -2,6 +2,7 @@ import os
 import tempfile
 
 os.environ["YOUJU_DATA_DIR"] = tempfile.mkdtemp(prefix="youju-test-")
+os.environ["YOUJU_ADAPT_LOCAL"] = "0"
 os.environ.pop("YOUJU_DATABASE_URL", None)
 os.environ.pop("YOUJU_ADMIN_PASSWORD", None)
 

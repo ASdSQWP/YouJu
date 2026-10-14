@@ -46,13 +46,27 @@ export async function api(path, { method = "GET", body, form, signal, quiet = fa
   return data;
 }
 
+function emitSSE(block, onEvent) {
+  for (const raw of block.split("\n")) {
+    if (!raw.startsWith("data:")) continue;
+    const payload = raw.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      onEvent(JSON.parse(payload));
+    } catch {
+      /* 半包或注释行 */
+    }
+  }
+}
+
 export async function streamSSE(path, body, onEvent, signal) {
   const res = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
     body: JSON.stringify(body),
     signal,
     credentials: "same-origin",
+    cache: "no-store",
   });
   if (!res.ok) {
     let data = null;
@@ -64,29 +78,38 @@ export async function streamSSE(path, body, onEvent, signal) {
     if (res.status === 401 && unauthorizedHandler) unauthorizedHandler();
     throw new ApiError(res.status, detailOf(data, res.status));
   }
+  if (!res.body) throw new ApiError(0, "浏览器没有返回流式响应");
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+  const pump = (flush) => {
+    buffer = buffer.replace(/\r\n/g, "\n");
     let cut;
     while ((cut = buffer.indexOf("\n\n")) >= 0) {
-      const block = buffer.slice(0, cut);
+      emitSSE(buffer.slice(0, cut), onEvent);
       buffer = buffer.slice(cut + 2);
-      for (const line of block.split("\n")) {
-        if (!line.startsWith("data:")) continue;
-        const payload = line.slice(5).trim();
-        if (!payload) continue;
-        let event;
-        try {
-          event = JSON.parse(payload);
-        } catch {
-          continue;
-        }
-        onEvent(event);
+    }
+    if (flush && buffer.trim()) {
+      emitSSE(buffer, onEvent);
+      buffer = "";
+    }
+  };
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (value) buffer += decoder.decode(value, { stream: !done });
+      if (done) {
+        buffer += decoder.decode();
+        pump(true);
+        break;
       }
+      pump(false);
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* 已经释放 */
     }
   }
 }

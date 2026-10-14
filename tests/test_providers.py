@@ -80,6 +80,28 @@ def test_openai_drops_rejected_temperature(transport):
     assert "temperature" in bodies[0] and "temperature" not in bodies[1]
 
 
+def test_http_client_bypasses_loopback_proxy():
+    client = provider_http.async_client()
+    try:
+        patterns = [getattr(key, "pattern", "") for key in client._mounts]
+        assert "http://127.0.0.1" in patterns
+        assert "http://localhost" in patterns
+    finally:
+        asyncio.run(client.aclose())
+
+
+def test_openai_missing_model_lists_installed(transport):
+    def handler(req):
+        if str(req.url).endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "huihui_ai/qwen3-abliterated:8b"}]})
+        return httpx.Response(404, json={"error": {"message": "model 'qwen3:8b' not found"}})
+
+    transport(handler)
+    with pytest.raises(ProviderError) as info:
+        drain(OpenAICompatProvider("http://127.0.0.1:11434/v1").stream("qwen3:8b", [{"role": "user", "content": "hi"}]))
+    assert "qwen3:8b" in str(info.value) and "huihui_ai/qwen3-abliterated:8b" in str(info.value)
+
+
 def test_openai_error_message_and_azure_header(transport):
     seen = transport(lambda req: httpx.Response(401, json={"error": {"message": "Incorrect API key"}}))
     provider = OpenAICompatProvider("https://r.openai.azure.com/openai/v1", "az-key", auth_header="api-key")

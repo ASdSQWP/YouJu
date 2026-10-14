@@ -1,6 +1,6 @@
 import { api, streamSSE } from "../api.js";
 import { fill, confirmDialog, copyText, emptyState, h, icon, menu, modal, openSidebar, promptDialog, toast } from "../ui.js";
-import { isAdmin, loadConversations, store } from "../state.js";
+import { isAdmin, loadAgents, loadConversations, loadModels, store } from "../state.js";
 import { navigate, replacePath } from "../router.js";
 import { stripCitations, usedNumbers } from "../markdown.js";
 import { avatar, checkBadge, citedSources, markdownEl, modeBadges, processBlock, reasoningBlock, sourceCard, sourcesRow } from "../components.js";
@@ -10,6 +10,7 @@ const OFFLINE_INFO = { ref: LOCAL, model: "离线摘录", provider: "内置", co
 
 export function chatView({ params, query }) {
   const st = { convId: params.id ? Number(params.id) : null, agent: null, messages: [], streaming: false, controller: null, model: LOCAL };
+  let paintFrame = 0;
   const root = h("div", { class: "chat" });
   const header = h("header", { class: "topbar" });
   const thread = h("div", { class: "thread" });
@@ -25,6 +26,11 @@ export function chatView({ params, query }) {
   return { el: root, destroy: () => st.controller?.abort() };
 
   async function init() {
+    try {
+      await Promise.all([loadAgents(), loadModels()]);
+    } catch {
+      /* 列表刷新失败时沿用已有缓存 */
+    }
     if (!store.agents.length) {
       thread.classList.add("is-empty");
       fill(thread, emptyState("bot", "还没有可用的智能体", "先创建一个智能体，绑定知识库后就能开始提问。", h("button", { class: "btn btn-primary", type: "button", onclick: () => navigate("/agents/new") }, icon("plus", 16), "创建智能体")));
@@ -255,7 +261,6 @@ export function chatView({ params, query }) {
     return h("button", { class: `icon-btn${on ? " on" : ""}`, type: "button", title, onclick }, icon(name, 16));
   }
 
-  let paintFrame = 0;
   function schedulePaint(m) {
     if (paintFrame) return;
     paintFrame = requestAnimationFrame(() => {
@@ -268,7 +273,9 @@ export function chatView({ params, query }) {
     const stick = nearBottom();
     const fresh = m.role === "user" ? userMessage(m) : aiMessage(m);
     if (m._old && m._old.isConnected) m._old.replaceWith(fresh);
+    else if (!fresh.isConnected) thread.append(fresh);
     m._old = fresh;
+    m._el = fresh;
     if (stick) scrollBottom();
   }
 
@@ -315,6 +322,15 @@ export function chatView({ params, query }) {
       if (err.name === "AbortError") ai.stopped = true;
       else ai.error = err.message;
     } finally {
+      if (!ai.content && st.convId) {
+        try {
+          const data = await api(`/api/conversations/${st.convId}`);
+          const last = [...(data.messages || [])].reverse().find((m) => m.role === "assistant");
+          if (last) Object.assign(ai, last);
+        } catch {
+          /* 回读失败时仍结束流式状态 */
+        }
+      }
       ai.streaming = false;
       st.streaming = false;
       st.controller = null;

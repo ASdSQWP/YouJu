@@ -7,8 +7,11 @@ from sqlalchemy import func, select
 from youju.config import settings
 from youju.db import SessionLocal
 from youju.models import Document, Event, User
+from youju.providers.adapt import adapt_if_needed
 from youju.security import hash_password
 from youju.seed import seed_demo
+from youju.vision.engine import runtime
+from youju.vision.seed import seed_vision
 
 
 def bootstrap() -> None:
@@ -31,5 +34,10 @@ def bootstrap() -> None:
             db.add(admin)
             db.commit()
             seed_demo(db, admin)
+        owner = db.scalar(select(User).where(User.role == "admin").order_by(User.id))
+        if owner:
+            seed_vision(db, owner)
+        adapt_if_needed(db)
     finally:
         db.close()
+    runtime.start_loop()

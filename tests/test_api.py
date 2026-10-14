@@ -210,6 +210,19 @@ def test_mcp_server(client):
     assert TestClient(app).post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"}).status_code == 401
 
 
+def test_index_theme_uses_windows_and_cookie(client, monkeypatch):
+    monkeypatch.setattr("youju.main.os_theme", lambda: "dark")
+    page = client.get("/")
+    assert 'data-os-theme="dark"' in page.text
+    assert 'data-theme="dark"' in page.text
+    assert "no-store" in page.headers["cache-control"]
+    light = client.get("/", cookies={"yj-theme": "light"})
+    assert 'data-os-theme="dark"' in light.text and 'data-theme="light"' in light.text
+    monkeypatch.setattr("youju.main.os_theme", lambda: "light")
+    system = client.get("/", cookies={"yj-theme": "system"})
+    assert 'data-os-theme="light"' in system.text and 'data-theme="light"' in system.text
+
+
 def test_stats_dashboard(client):
     data = client.get("/api/stats").json()
     assert data["totals"]["answers"] > 0 and data["summary"]["answers"] > 0

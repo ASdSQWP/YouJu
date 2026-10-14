@@ -357,15 +357,23 @@ export function fmtMs(ms) {
 }
 
 export function themePref() {
-  return localStorage.getItem("yj-theme") || "system";
+  const saved = localStorage.getItem("yj-theme");
+  return saved === "light" || saved === "dark" || saved === "system" ? saved : "system";
 }
 
-const media = window.matchMedia("(prefers-color-scheme: dark)");
-export function applyTheme(pref = themePref()) {
-  localStorage.setItem("yj-theme", pref);
-  const dark = pref === "dark" || (pref === "system" && media.matches);
-  document.documentElement.dataset.theme = dark ? "dark" : "light";
+function osTheme() {
+  const marked = document.documentElement.dataset.osTheme;
+  if (marked === "light" || marked === "dark") return marked;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
-media.addEventListener("change", () => {
-  if (themePref() === "system") applyTheme("system");
-});
+
+export function applyTheme(pref = themePref()) {
+  if (pref !== "light" && pref !== "dark" && pref !== "system") pref = "system";
+  localStorage.setItem("yj-theme", pref);
+  document.cookie = `yj-theme=${pref}; Path=/; Max-Age=31536000; SameSite=Lax`;
+  const theme = pref === "system" ? osTheme() : pref;
+  const root = document.documentElement;
+  root.dataset.theme = theme;
+  root.dataset.themePref = pref;
+  root.style.colorScheme = theme;
+}

@@ -275,6 +275,7 @@ PRESETS: list[dict] = [
         "key_url": "https://ollama.com/download",
         "color": "#1f2937",
         "needs_key": False,
+        "note": "启动时会按本机 ollama list 自动对齐模型名，换电脑不用改配置。也可点「从接口获取」手动刷新。",
         "models": [_chat("qwen3:8b"), _chat("llama3.1:8b"), _embed("bge-m3")],
     },
     {

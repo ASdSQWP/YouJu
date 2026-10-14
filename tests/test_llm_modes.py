@@ -113,6 +113,7 @@ def test_model_without_tools_uses_rag(client, agents, mock_provider):
 def test_model_outage_falls_back_to_offline(client, agents, mock_provider):
     mock_provider(lambda req: httpx.Response(503, json={"error": {"message": "overloaded"}}))
     _, _, final = ask(client, agents["safety"]["id"], "没有监护人可以动火吗？", model=None)
-    assert final["mode"] == "fallback" and not final["error"]
+    assert final["mode"] == "fallback"
+    assert final["error"] and "503" in final["error"]
     assert "禁止开始动火" in final["content"]
     assert any(s["kind"] == "fallback" for s in final["trace"])

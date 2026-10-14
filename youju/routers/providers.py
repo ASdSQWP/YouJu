@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from youju.db import get_db, iso
 from youju.deps import admin_user, current_user
 from youju.models import Agent, KnowledgeBase, Provider, User
+from youju.providers.adapt import adapt_if_needed, guess_model_type
 from youju.providers.base import ProviderError
 from youju.providers.presets import PRESET_MAP, PRESETS
 from youju.providers.registry import (
@@ -276,15 +277,6 @@ async def test_provider(
     }
 
 
-def _guess_type(name: str) -> str:
-    lower = name.lower()
-    if "rerank" in lower:
-        return "rerank"
-    if "embed" in lower or lower.startswith(("bge-", "baai/bge", "m3e", "gte-")):
-        return "embedding"
-    return "chat"
-
-
 @router.post("/api/providers/{provider_id}/models/fetch")
 async def fetch_models(provider_id: int, _admin: User = Depends(admin_user), db: Session = Depends(get_db)):
     row = _get(db, provider_id)
@@ -292,11 +284,12 @@ async def fetch_models(provider_id: int, _admin: User = Depends(admin_user), db:
         names = await asyncio.wait_for(chat_provider(row).list_models(), timeout=30)
     except (ProviderError, httpx.HTTPError, asyncio.TimeoutError, ValueError) as exc:
         raise HTTPException(status_code=502, detail=f"获取模型列表失败：{exc}") from exc
-    return {"models": [{"id": name, "type": _guess_type(name)} for name in names]}
+    return {"models": [{"id": name, "type": guess_model_type(name)} for name in names]}
 
 
 @router.get("/api/models")
 def models(_user: User = Depends(current_user), db: Session = Depends(get_db)):
+    adapt_if_needed(db)
     return {
         "chat": [m.public() for m in list_models(db, "chat")],
         "embedding": [m.public() for m in list_models(db, "embedding")],

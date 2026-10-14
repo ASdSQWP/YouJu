@@ -291,6 +291,7 @@ async def _offline(r: Run, kbs: list, smalltalk: bool) -> AsyncIterator[dict]:
 
 async def _fallback(r: Run, kbs: list, exc: ProviderError) -> AsyncIterator[dict]:
     r.mode = "fallback"
+    r.error = str(exc)
     note = r.start("fallback", "模型调用失败，改用离线摘录")
     yield r.event(r.end(note, status="done", detail=str(exc)[:200]))
     async for ev in _pipeline(r, None, kbs):

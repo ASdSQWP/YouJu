@@ -9,6 +9,7 @@ import { kbDetailView, kbListView } from "./views/kbs.js";
 import { eventsView } from "./views/events.js";
 import { dashboardView } from "./views/dashboard.js";
 import { settingsView } from "./views/settings.js";
+import { visionView } from "./views/vision.js";
 
 const root = document.getElementById("app");
 
@@ -19,6 +20,9 @@ route("/agents/new", agentEditView);
 route("/agents/:id", agentEditView);
 route("/kbs", kbListView);
 route("/kbs/:id", kbDetailView);
+route("/vision/rules", visionView);
+route("/vision", visionView);
+route("/vision/:id", visionView);
 route("/events", eventsView);
 route("/events/:id", eventsView);
 route("/dashboard", dashboardView);
@@ -29,6 +33,7 @@ const NAV = [
   { path: "/chat", label: "对话", icon: "chat" },
   { path: "/agents", label: "智能体", icon: "bot" },
   { path: "/kbs", label: "知识库", icon: "book" },
+  { path: "/vision", label: "视觉检测", icon: "camera" },
   { path: "/events", label: "事件中心", icon: "inbox", badge: true },
   { path: "/dashboard", label: "运营看板", icon: "chart", admin: true },
   { path: "/settings", label: "设置", icon: "settings" },

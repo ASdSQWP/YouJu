@@ -22,7 +22,13 @@ from youju.serial import message_public
 
 router = APIRouter(tags=["chat"])
 
-SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+SSE_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+# 系统代理常按 2KB 缓冲，先垫一行 SSE 注释才能立刻看到打字过程
+SSE_PAD = ":" + (" " * 2048) + "\n\n"
 
 
 def sse(data: dict) -> str:
@@ -162,13 +168,20 @@ def chat(conv_id: int, body: ChatBody, user: User = Depends(current_user), db: S
         model_ref=body.model,
     )
     start = {"type": "start", "conversation_id": conv.id, "user_message_id": question.id, "title": conv.title}
-    return StreamingResponse(stream_answer(conv.id, inp, start), media_type="text/event-stream", headers=SSE_HEADERS)
+    db.commit()
+    db.close()
+    return StreamingResponse(
+        stream_answer(conv.id, inp, start),
+        media_type="text/event-stream; charset=utf-8",
+        headers=SSE_HEADERS,
+    )
 
 
 async def stream_answer(conv_id: int, inp: RunInput, start: dict):
     state = new_state()
     saved = False
     try:
+        yield SSE_PAD
         yield sse(start)
         async for ev in run(inp):
             if ev["type"] == "final":

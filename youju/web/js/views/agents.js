@@ -1,6 +1,6 @@
 import { api } from "../api.js";
 import { fill, badge, confirmDialog, emptyState, field, h, icon, pageShell, segmented, switchInput, toast } from "../ui.js";
-import { loadAgents, loadKbs, store } from "../state.js";
+import { loadAgents, loadKbs, loadModels, store } from "../state.js";
 import { navigate } from "../router.js";
 import { avatar } from "../components.js";
 
@@ -96,7 +96,7 @@ export function agentEditView({ params, query }) {
         fill(holder, templatePicker(templates));
         return;
       }
-      await loadKbs();
+      await Promise.all([loadKbs(), loadModels()]);
       let data;
       if (params.id) {
         data = await api(`/api/agents/${params.id}`);
