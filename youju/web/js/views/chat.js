@@ -1,9 +1,9 @@
 import { api, streamSSE } from "../api.js";
-import { fill, confirmDialog, copyText, emptyState, h, icon, menu, modal, openSidebar, promptDialog, toast } from "../ui.js";
+import { fill, confirmDialog, copyText, emptyState, h, icon, menu, modal, openSidebar, promptDialog, toast } from "../ui.js?v=20261015b";
 import { isAdmin, loadAgents, loadConversations, loadModels, store } from "../state.js";
 import { navigate, replacePath } from "../router.js";
 import { stripCitations, usedNumbers } from "../markdown.js";
-import { avatar, checkBadge, citedSources, markdownEl, modeBadges, processBlock, reasoningBlock, sourceCard, sourcesRow } from "../components.js";
+import { avatar, checkBadge, citedSources, fillMarkdown, markdownEl, modeBadges, processBlock, reasoningBlock, sourceCard, sourcesRow } from "../components.js";
 
 const LOCAL = "local:extractive";
 const OFFLINE_INFO = { ref: LOCAL, model: "离线摘录", provider: "内置", color: "#64748b", local: true, label: "离线摘录" };
@@ -271,12 +271,149 @@ export function chatView({ params, query }) {
 
   function paint(m) {
     const stick = nearBottom();
+    if (m.role === "assistant" && m._el?.isConnected) patchAssistant(m);
+    else mountMessage(m);
+    if (stick && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight > 2) scrollBottom();
+  }
+
+  function mountMessage(m) {
     const fresh = m.role === "user" ? userMessage(m) : aiMessage(m);
-    if (m._old && m._old.isConnected) m._old.replaceWith(fresh);
-    else if (!fresh.isConnected) thread.append(fresh);
+    if (m._old && m._old.isConnected) {
+      fresh.classList.add("is-settled");
+      m._old.replaceWith(fresh);
+    } else if (!fresh.isConnected) thread.append(fresh);
     m._old = fresh;
     m._el = fresh;
-    if (stick) scrollBottom();
+  }
+
+  function placeBefore(body, el, selector) {
+    const before = body.querySelector(selector);
+    if (before) body.insertBefore(el, before);
+    else body.append(el);
+  }
+
+  function bindMarkdown(md, m) {
+    md.addEventListener("click", (e) => {
+      const cite = e.target.closest(".cite");
+      if (cite) openDrawer(m, Number(cite.dataset.n));
+      const copy = e.target.closest(".code-copy");
+      if (copy) copyText(copy.closest(".code-block").querySelector("code").textContent);
+    });
+  }
+
+  function patchAssistant(m) {
+    const body = m._el.querySelector(".msg-body");
+    if (!body) return mountMessage(m);
+    m._el.classList.add("is-settled");
+    syncReasoning(body, m);
+    syncProcess(body, m);
+    syncContent(body, m);
+    syncError(body, m);
+    syncSources(body, m);
+    syncActions(body, m);
+  }
+
+  function syncReasoning(body, m) {
+    let box = body.querySelector(".reasoning");
+    if (!m.reasoning) {
+      box?.remove();
+      return;
+    }
+    const thinking = !!(m.streaming && !m.content);
+    if (!box) {
+      box = reasoningBlock(m.reasoning, { streaming: thinking, open: m._openReasoning, onToggle: (v) => (m._openReasoning = v) });
+      placeBefore(body, box, ".process, .md, .typing, .msg-error, .sources, .msg-actions");
+      return;
+    }
+    const text = box.querySelector(".reasoning-body");
+    if (text && text.textContent !== m.reasoning) text.textContent = m.reasoning;
+    const label = box.querySelector(".reasoning-label");
+    const next = thinking ? "正在思考…" : "已深度思考";
+    if (label && label.textContent !== next) label.textContent = next;
+  }
+
+  function syncProcess(body, m) {
+    let box = body.querySelector(".process");
+    if (!m.trace?.length) {
+      box?.remove();
+      return;
+    }
+    const sig = JSON.stringify(m.trace);
+    if (!box) {
+      box = processBlock(m.trace, { streaming: m.streaming, open: m._openProcess, onToggle: (v) => (m._openProcess = v) });
+      box.dataset.sig = sig;
+      placeBefore(body, box, ".md, .typing, .msg-error, .sources, .msg-actions");
+      return;
+    }
+    if (box.dataset.sig === sig) return;
+    const fresh = processBlock(m.trace, { streaming: m.streaming, open: box.open, onToggle: (v) => (m._openProcess = v) });
+    box.querySelector("summary")?.replaceWith(fresh.querySelector("summary"));
+    box.querySelector(".process-body")?.replaceWith(fresh.querySelector(".process-body"));
+    box.dataset.sig = sig;
+  }
+
+  function syncContent(body, m) {
+    let md = body.querySelector(".md");
+    const typing = body.querySelector(".typing");
+    if (m.content || !m.streaming) {
+      if (!md) {
+        md = markdownEl(m.content, m.sources, m.streaming);
+        bindMarkdown(md, m);
+        if (typing) typing.replaceWith(md);
+        else placeBefore(body, md, ".msg-error, .sources, .msg-actions");
+      } else fillMarkdown(md, m.content, m.sources, m.streaming);
+      return;
+    }
+    md?.remove();
+    if (!m.trace?.length && !typing) placeBefore(body, h("div", { class: "typing" }, h("i"), h("i"), h("i")), ".msg-error, .sources, .msg-actions");
+  }
+
+  function syncError(body, m) {
+    let box = body.querySelector(".msg-error");
+    if (!m.error) {
+      box?.remove();
+      return;
+    }
+    if (!box) {
+      box = h("div", { class: "msg-error" }, icon("alert", 16), h("span", null, m.error));
+      placeBefore(body, box, ".sources, .msg-actions");
+      return;
+    }
+    const span = box.querySelector("span");
+    if (span && span.textContent !== m.error) span.textContent = m.error;
+  }
+
+  function syncSources(body, m) {
+    const cited = citedSources(m.content, m.sources);
+    let box = body.querySelector(".sources");
+    if (!cited.length) {
+      box?.remove();
+      return;
+    }
+    const sig = cited.map((s) => s.n).join(",");
+    if (box?.dataset.sig === sig) return;
+    const fresh = sourcesRow(cited, (n) => openDrawer(m, n));
+    fresh.dataset.sig = sig;
+    if (box) box.replaceWith(fresh);
+    else placeBefore(body, fresh, ".msg-actions");
+  }
+
+  function syncActions(body, m) {
+    body.querySelector(".msg-actions")?.remove();
+    if (m.streaming) return;
+    body.append(
+      h(
+        "div",
+        { class: "msg-actions" },
+        checkBadge(m.check),
+        actionButton("copy", "复制", () => copyText(stripCitations(m.content))),
+        isLastAnswer(m) && st.agent ? actionButton("refresh", "重新生成", () => send("", true)) : null,
+        m.id ? actionButton("thumbUp", "有帮助", () => rate(m, m.feedback === 1 ? 0 : 1), m.feedback === 1) : null,
+        m.id ? actionButton("thumbDown", "没帮助", () => rateDown(m), m.feedback === -1) : null,
+        m.sources?.length && !citedSources(m.content, m.sources).length ? actionButton("book", "查看检索结果", () => openDrawer(m, m.sources[0].n)) : null,
+        m.latency_ms ? h("span", { class: "msg-stat", title: "总耗时" }, `${(m.latency_ms / 1000).toFixed(1)}s`) : null,
+      ),
+    );
   }
 
   function nearBottom() {
@@ -336,7 +473,7 @@ export function chatView({ params, query }) {
       st.controller = null;
       cancelAnimationFrame(paintFrame);
       paintFrame = 0;
-      renderThread();
+      paint(ai);
       composer.update();
       loadConversations().catch(() => {});
     }

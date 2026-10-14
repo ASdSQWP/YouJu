@@ -215,12 +215,15 @@ def test_index_theme_uses_windows_and_cookie(client, monkeypatch):
     page = client.get("/")
     assert 'data-os-theme="dark"' in page.text
     assert 'data-theme="dark"' in page.text
+    assert 'name="color-scheme" content="dark"' in page.text
     assert "no-store" in page.headers["cache-control"]
     light = client.get("/", cookies={"yj-theme": "light"})
     assert 'data-os-theme="dark"' in light.text and 'data-theme="light"' in light.text
+    assert 'name="color-scheme" content="light"' in light.text
     monkeypatch.setattr("youju.main.os_theme", lambda: "light")
     system = client.get("/", cookies={"yj-theme": "system"})
     assert 'data-os-theme="light"' in system.text and 'data-theme="light"' in system.text
+    assert 'name="color-scheme" content="light"' in system.text
 
 
 def test_stats_dashboard(client):

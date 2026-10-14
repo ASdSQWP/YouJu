@@ -1,4 +1,4 @@
-import { fill, h, icon, modal, softColor, spinner, fmtMs } from "./ui.js";
+import { fill, h, icon, modal, softColor, spinner, fmtMs } from "./ui.js?v=20261015b";
 import { renderMarkdown, usedNumbers } from "./markdown.js";
 
 export function avatar(item, size = "md") {
@@ -6,14 +6,31 @@ export function avatar(item, size = "md") {
   return h("span", { class: `avatar avatar-${size}`, style: { background: softColor(color, 0.16), color } }, item?.emoji || "✨");
 }
 
-export function markdownEl(text, sources, streaming = false) {
-  const el = h("div", { class: `md${streaming ? " streaming" : ""}`, html: renderMarkdown(text || "", { cite: new Set((sources || []).map((s) => s.n)) }) });
-  if (streaming) {
-    let node = el.lastElementChild;
-    while (node && ["UL", "OL", "LI", "BLOCKQUOTE"].includes(node.tagName) && node.lastElementChild) node = node.lastElementChild;
-    (node && !["DIV", "TABLE", "PRE", "HR"].includes(node.tagName) ? node : el).append(h("span", { class: "caret" }));
+function caretHost(el) {
+  let node = el.lastElementChild;
+  while (node && ["UL", "OL", "LI", "BLOCKQUOTE"].includes(node.tagName) && node.lastElementChild) node = node.lastElementChild;
+  return node && !["DIV", "TABLE", "PRE", "HR"].includes(node.tagName) ? node : el;
+}
+
+export function fillMarkdown(el, text, sources, streaming = false) {
+  const html = renderMarkdown(text || "", { cite: new Set((sources || []).map((s) => s.n)) });
+  const caret = el.querySelector(".caret");
+  if (el._html !== html) {
+    if (caret) caret.remove();
+    el.innerHTML = html;
+    el._html = html;
   }
+  el.classList.toggle("streaming", !!streaming);
+  if (!streaming) {
+    el.querySelector(".caret")?.remove();
+    return el;
+  }
+  if (!el.querySelector(".caret")) caretHost(el).append(caret || h("span", { class: "caret" }));
   return el;
+}
+
+export function markdownEl(text, sources, streaming = false) {
+  return fillMarkdown(h("div", { class: "md" }), text, sources, streaming);
 }
 
 export function modeBadges(m) {
@@ -101,7 +118,7 @@ export function reasoningBlock(text, { streaming = false, open, onToggle } = {})
   const det = h(
     "details",
     { class: "reasoning", open: (open ?? streaming) || undefined },
-    h("summary", null, icon("lightbulb", 15), h("span", null, streaming ? "正在思考…" : "已深度思考"), icon("chevronDown", 15, "chev")),
+    h("summary", null, icon("lightbulb", 15), h("span", { class: "reasoning-label" }, streaming ? "正在思考…" : "已深度思考"), icon("chevronDown", 15, "chev")),
     h("div", { class: "reasoning-body" }, text),
   );
   det.addEventListener("toggle", () => onToggle?.(det.open));

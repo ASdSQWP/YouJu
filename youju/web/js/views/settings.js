@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { fill, applyTheme, badge, confirmDialog, copyText, emptyState, field, fmtDate, h, icon, modal, openSidebar, segmented, spinner, switchInput, themePref, timeAgo, toast } from "../ui.js";
+import { fill, applyTheme, badge, confirmDialog, copyText, emptyState, field, fmtDate, h, icon, modal, openSidebar, segmented, spinner, switchInput, themePref, timeAgo, toast } from "../ui.js?v=20261015b";
 import { isAdmin, loadAgents, loadModels, store } from "../state.js";
 import { navigate } from "../router.js";
 

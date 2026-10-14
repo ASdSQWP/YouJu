@@ -39,7 +39,7 @@ for module in (auth, users, providers, kbs, agents, chat, events, evals, stats, 
 class WebFiles(StaticFiles):
     async def get_response(self, path, scope):
         response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "no-cache"
+        response.headers["Cache-Control"] = "no-store"
         return response
 
 
@@ -84,6 +84,7 @@ def index(request: Request):
         f'data-os-theme="{system}" data-theme="{theme}"',
         1,
     )
+    html = html.replace('<meta name="color-scheme" content="dark" />', f'<meta name="color-scheme" content="{theme}" />', 1)
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 

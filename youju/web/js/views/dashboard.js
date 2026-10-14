@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { fill, emptyState, field, fmtMs, fmtNum, h, icon, modal, pageShell, segmented, spinner, timeAgo, toast } from "../ui.js";
+import { fill, emptyState, field, fmtMs, fmtNum, h, icon, modal, pageShell, segmented, spinner, timeAgo, toast } from "../ui.js?v=20261015b";
 import { isAdmin, store } from "../state.js";
 import { navigate } from "../router.js";
 

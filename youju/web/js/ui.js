@@ -375,5 +375,8 @@ export function applyTheme(pref = themePref()) {
   const root = document.documentElement;
   root.dataset.theme = theme;
   root.dataset.themePref = pref;
-  root.style.colorScheme = theme;
+  root.style.colorScheme = `only ${theme}`;
+  root.style.backgroundColor = theme === "dark" ? "#171717" : "#ffffff";
+  const meta = document.querySelector('meta[name="color-scheme"]');
+  if (meta) meta.setAttribute("content", theme);
 }

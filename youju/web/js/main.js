@@ -1,5 +1,5 @@
 import { api, onUnauthorized } from "./api.js";
-import { fill, applyTheme, closeSidebar, confirmDialog, h, icon, logo, menu, promptDialog, themePref, toast } from "./ui.js";
+import { fill, applyTheme, closeSidebar, confirmDialog, h, icon, logo, menu, promptDialog, themePref, toast } from "./ui.js?v=20261015b";
 import { isAdmin, loadAll, loadConversations, on, store } from "./state.js";
 import { currentPath, navigate, route, startRouter } from "./router.js";
 import { renderAuth } from "./views/auth.js";

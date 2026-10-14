@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { fill, copyText, emptyState, fmtDate, h, icon, menu, modal, openSidebar, spinner, timeAgo, toast } from "../ui.js";
+import { fill, copyText, emptyState, fmtDate, h, icon, menu, modal, openSidebar, spinner, timeAgo, toast } from "../ui.js?v=20261015b";
 import { loadConversations, loadEventCount, store } from "../state.js";
 import { navigate, replacePath } from "../router.js";
 import { avatar, checkBadge, citedSources, eventStatus, levelBadge, markdownEl, modeBadges, processBlock, sourcesModal, sourcesRow } from "../components.js";

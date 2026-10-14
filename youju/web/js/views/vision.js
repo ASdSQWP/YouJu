@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { fill, badge, confirmDialog, emptyState, field, h, icon, openSidebar, segmented, spinner, switchInput, timeAgo, toast } from "../ui.js";
+import { fill, badge, confirmDialog, emptyState, field, h, icon, openSidebar, segmented, spinner, switchInput, timeAgo, toast } from "../ui.js?v=20261015b";
 import { loadEventCount, store } from "../state.js";
 import { navigate, replacePath } from "../router.js";
 import { levelBadge } from "../components.js";

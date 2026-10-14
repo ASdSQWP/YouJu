@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { fill, badge, confirmDialog, emptyState, field, fmtBytes, fmtDate, fmtMs, fmtNum, h, icon, modal, pageShell, segmented, spinner, timeAgo, toast } from "../ui.js";
+import { fill, badge, confirmDialog, emptyState, field, fmtBytes, fmtDate, fmtMs, fmtNum, h, icon, modal, pageShell, segmented, spinner, timeAgo, toast } from "../ui.js?v=20261015b";
 import { loadAgents, loadKbs, store } from "../state.js";
 import { navigate } from "../router.js";
 import { sourceCard } from "../components.js";

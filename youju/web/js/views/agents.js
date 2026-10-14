@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { fill, badge, confirmDialog, emptyState, field, h, icon, pageShell, segmented, switchInput, toast } from "../ui.js";
+import { fill, badge, confirmDialog, emptyState, field, h, icon, pageShell, segmented, switchInput, toast } from "../ui.js?v=20261015b";
 import { loadAgents, loadKbs, loadModels, store } from "../state.js";
 import { navigate } from "../router.js";
 import { avatar } from "../components.js";

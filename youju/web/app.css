@@ -1,5 +1,4 @@
 :root {
-  color-scheme: light dark;
   --font: "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   --mono: "JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --bg: #ffffff;
@@ -38,46 +37,14 @@
   --thread-w: 790px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --bg: #171717;
-    --bg-soft: #1c1c1c;
-    --sidebar: #121212;
-    --surface: #1f1f1f;
-    --surface-2: #272727;
-    --surface-3: #303030;
-    --hover: rgba(255, 255, 255, 0.06);
-    --active: rgba(255, 255, 255, 0.1);
-    --border: #2a2a2a;
-    --border-strong: #3a3a3a;
-    --text: #ececea;
-    --text-2: #c7c7c2;
-    --muted: #8f8f8a;
-    --accent: #26a395;
-    --accent-hover: #31b8a9;
-    --accent-soft: rgba(38, 163, 149, 0.16);
-    --accent-text: #62d5c6;
-    --ok: #4ade80;
-    --ok-soft: rgba(74, 222, 128, 0.12);
-    --warn: #fbbf24;
-    --warn-soft: rgba(251, 191, 36, 0.12);
-    --danger: #f87171;
-    --danger-soft: rgba(248, 113, 113, 0.13);
-    --info: #60a5fa;
-    --info-soft: rgba(96, 165, 250, 0.13);
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 6px 18px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55);
-  }
-}
-
 :root[data-theme="light"] {
   color-scheme: light;
+  color-scheme: only light;
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
+  color-scheme: only dark;
   --bg: #171717;
   --bg-soft: #1c1c1c;
   --sidebar: #121212;
@@ -109,14 +76,12 @@
 }
 
 * { box-sizing: border-box; }
-html, body { height: 100%; }
+html, body { height: 100%; background: var(--bg); color: var(--text); }
 body {
   margin: 0;
   font-family: var(--font);
   font-size: 14px;
   line-height: 1.6;
-  color: var(--text);
-  background: var(--bg);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -336,6 +301,7 @@ kbd { font-family: var(--mono); font-size: 10.5px; color: var(--muted); border: 
 .thread { max-width: var(--thread-w); margin: 0 auto; padding: 8px 24px 32px; }
 .thread.is-empty { min-height: 100%; display: flex; }
 .msg { display: flex; gap: 14px; margin: 24px 0; animation: fadeIn 0.2s ease; }
+.msg.is-settled { animation: none; }
 .msg-user { justify-content: flex-end; }
 .msg-user .bubble { max-width: 82%; padding: 10px 16px; border-radius: 20px; border-top-right-radius: 6px; background: var(--surface-2); white-space: pre-wrap; word-break: break-word; font-size: 15px; line-height: 1.65; }
 .msg-avatar { width: 32px; height: 32px; flex: none; margin-top: 1px; border-radius: 10px; display: grid; place-items: center; font-size: 17px; }

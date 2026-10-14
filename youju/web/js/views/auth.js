@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { fill, field, h, icon, logo, spinner } from "../ui.js";
+import { fill, field, h, icon, logo, spinner } from "../ui.js?v=20261015b";
 
 function hero() {
   const point = (ic, title, desc) => h("div", { class: "auth-point" }, h("span", { class: "auth-point-icon" }, icon(ic, 18)), h("div", null, h("b", null, title), h("span", null, desc)));
