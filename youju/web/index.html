@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>有据 · 企业知识智能体</title>
+  <meta name="description" content="每一句结论都能找到出处的企业知识智能体平台" />
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/static/app.css" />
+  <script>
+    (function () {
+      var pref = localStorage.getItem("yj-theme") || "system";
+      var dark = pref === "dark" || (pref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+    })();
+  </script>
+</head>
+<body>
+  <div id="app"><div class="boot"><div class="boot-spin"></div></div></div>
+  <script type="module" src="/static/js/main.js"></script>
+</body>
+</html>

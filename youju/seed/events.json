@@ -1,0 +1,70 @@
+[
+  {
+    "key": "safety-height",
+    "template": "safety",
+    "label": "视觉检测：高空作业防护缺失",
+    "title": "杆塔3 检测到安全带缺失、挂钩未连接",
+    "level": "high",
+    "source": "视觉检测 · cam-03",
+    "data": {
+      "site": "演示变电站A-杆塔3",
+      "time": "2026-10-14 09:12:00",
+      "findings": ["安全带缺失", "挂钩未连接", "临边防护缺失"],
+      "confidence": {"safety_belt": 0.22, "hook": 0.18, "edge_guard": 0.2}
+    }
+  },
+  {
+    "key": "safety-fire",
+    "template": "safety",
+    "label": "视觉检测：烟火且无监护人",
+    "title": "电缆沟出现烟火，动火点没有监护人",
+    "level": "high",
+    "source": "视觉检测 · cam-11",
+    "data": {"site": "演示站-电缆沟", "findings": ["烟火", "没有监护人"]}
+  },
+  {
+    "key": "safety-video",
+    "template": "safety",
+    "label": "设备平台：视频通道不可用",
+    "title": "球机2 心跳在线但视频通道不可用",
+    "level": "medium",
+    "source": "设备平台",
+    "data": {"device": "ball-02", "heartbeat": "在线", "channel": "视频通道不可用", "duration": "12 分钟"}
+  },
+  {
+    "key": "itops-cpu",
+    "template": "itops",
+    "label": "Prometheus：CPU 持续过高",
+    "title": "web-01 CPU 使用率 96%，持续 10 分钟",
+    "level": "P2",
+    "source": "Prometheus",
+    "data": {"host": "web-01", "metric": "CPU 使用率", "value": "96%", "duration": "10 分钟", "recent_change": "30 分钟前发布 order-service v2.3.1"}
+  },
+  {
+    "key": "itops-disk",
+    "template": "itops",
+    "label": "Zabbix：数据库磁盘告警",
+    "title": "db-01 磁盘使用率 93%",
+    "level": "P2",
+    "source": "Zabbix",
+    "data": {"host": "db-01", "mount": "/data", "usage": "93%", "top_dirs": ["/data/mysql", "/data/logs"]}
+  },
+  {
+    "key": "itops-pool",
+    "template": "itops",
+    "label": "APM：数据库连接池耗尽",
+    "title": "订单服务数据库连接池耗尽，下单接口超时",
+    "level": "P1",
+    "source": "APM",
+    "data": {"service": "order-service", "error": "获取连接超时", "active_connections": "200/200"}
+  },
+  {
+    "key": "service-delay",
+    "template": "service",
+    "label": "工单系统：客户投诉未发货",
+    "title": "客户投诉：付款 4 天仍未发货",
+    "level": "medium",
+    "source": "工单系统",
+    "data": {"order": "SO20261012001", "paid_at": "2026-10-10 20:15", "customer_tier": "金卡", "request": "要求补偿并尽快发货"}
+  }
+]

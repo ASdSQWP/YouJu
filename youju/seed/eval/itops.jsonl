@@ -1,0 +1,7 @@
+{"question": "P1 告警多久内要响应？", "expected": "告警分级与值班升级.md"}
+{"question": "CPU 使用率一直很高怎么排查？", "expected": "CPU与负载告警处置.md"}
+{"question": "可以同时重启所有实例吗？", "expected": "CPU与负载告警处置.md"}
+{"question": "磁盘满了哪些文件可以删？", "expected": "磁盘空间告警处置.md"}
+{"question": "数据库连接池耗尽怎么处理？", "expected": "数据库连接池耗尽处置.md"}
+{"question": "周五下午可以发布吗？", "expected": "发布与回滚规范.md"}
+{"question": "什么情况下必须回滚？", "expected": "发布与回滚规范.md"}
