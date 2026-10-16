@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { fill, badge, confirmDialog, emptyState, field, h, icon, pageShell, segmented, switchInput, toast } from "../ui.js?v=20261015b";
+import { fill, badge, confirmDialog, emptyState, field, h, icon, pageShell, segmented, switchInput, toast } from "../ui.js?v=20261016g";
 import { loadAgents, loadKbs, loadModels, store } from "../state.js";
 import { navigate } from "../router.js";
 import { avatar } from "../components.js";
@@ -254,7 +254,7 @@ function editor(data, id) {
     { class: "editor-form" },
     section("基本信息", "名称和外观会显示在智能体列表和对话页。", h("div", { class: "look" }, field("图标", emojiRow), field("颜色", colorRow)), h("div", { class: "row-2" }, field("名称", nameInput), field("分类", categoryInput)), field("描述", descInput)),
     section("角色设定", "引用标注和拒答规则由系统统一追加，这里只写身份和风格。", field("人设与要求", promptInput), field("开场白", openingInput), field("推荐问题", h("div", { class: "row-2" }, ...suggestionInputs))),
-    section("知识与模型", "可以绑定多个知识库，检索时会合并排序。", field("知识库", kbList), field("对话模型", modelSelect, "对话页里用户也可以临时切换模型。"), field("回答策略", strategyBox)),
+    section("知识与模型", "可以绑定多个知识库，检索时会合并排序。智能体除了依据资料回答，也会协助配置视觉检测模型。", field("知识库", kbList), field("接入的大模型", modelSelect, "改这里会保存到这个智能体。对话页右上角切换模型也会写回。"), field("回答策略", strategyBox)),
     section(
       "回答规则",
       "「有据」的核心：依据不足时宁可不答。",

@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { fill, copyText, emptyState, fmtDate, h, icon, menu, modal, openSidebar, spinner, timeAgo, toast } from "../ui.js?v=20261015b";
+import { fill, copyText, emptyState, fmtDate, h, icon, menu, modal, openImageLightbox, openSidebar, spinner, timeAgo, toast } from "../ui.js?v=20261016c";
 import { loadConversations, loadEventCount, store } from "../state.js";
 import { navigate, replacePath } from "../router.js";
 import { avatar, checkBadge, citedSources, eventStatus, levelBadge, markdownEl, modeBadges, processBlock, sourcesModal, sourcesRow } from "../components.js";
@@ -164,12 +164,76 @@ export function eventsView({ params }) {
     }
   }
 
+  function formatPayloadValue(v) {
+    if (v == null || v === "") return "—";
+    if (Array.isArray(v)) {
+      if (!v.length) return "—";
+      return v.map((item) => (typeof item === "object" ? JSON.stringify(item) : String(item))).join("、");
+    }
+    if (typeof v === "object") {
+      const entries = Object.entries(v);
+      if (!entries.length) return "—";
+      return entries
+        .map(([k, val]) => `${k}: ${typeof val === "number" ? (val <= 1 ? `${Math.round(val * 100)}%` : val) : val}`)
+        .join("；");
+    }
+    return String(v);
+  }
+
+  function eventDataBlock(ev) {
+    const data = ev.payload?.data;
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      return h("pre", { class: "code-box" }, JSON.stringify(data, null, 2) || "无");
+    }
+    const skip = new Set(["snapshot_url", "alert_id", "evidence"]);
+    const label = {
+      site: "点位",
+      code: "编号",
+      time: "时间",
+      findings: "检出项",
+      confidence: "置信度",
+      detector: "检测模式",
+      rule: "规则",
+    };
+    const fields = Object.entries(data).filter(([k]) => !skip.has(k));
+    const evidence = Array.isArray(data.evidence) ? data.evidence.filter((e) => e?.reason) : [];
+    const snap = data.snapshot_url || (data.alert_id ? `/api/vision/alerts/${data.alert_id}/snapshot` : "");
+    return h(
+      "div",
+      null,
+      snap
+        ? h("img", {
+            class: "ev-snap",
+            src: snap,
+            alt: "告警截图",
+            title: "点击放大",
+            onclick: () => openImageLightbox(snap, "告警截图"),
+          })
+        : null,
+      evidence.length
+        ? h(
+            "ul",
+            { class: "ev-evidence" },
+            ...evidence.map((e) => h("li", null, h("b", null, e.name || e.id || "依据"), "：", e.reason)),
+          )
+        : null,
+      fields.length
+        ? h(
+            "div",
+            { class: "kv" },
+            ...fields.flatMap(([k, v]) => {
+              const shown = k === "code" && (v == null || String(v).trim() === "") ? data.site || "未设置" : v;
+              return [h("div", { class: "kv-k" }, label[k] || k), h("div", { class: "kv-v" }, formatPayloadValue(shown))];
+            }),
+          )
+        : h("p", { class: "muted", style: { margin: 0 } }, "无结构化字段"),
+    );
+  }
+
   function renderDetail() {
     const ev = st.detail;
     const agent = store.agents.find((a) => a.id === ev.agent_id) || { name: ev.agent_name, emoji: ev.agent_emoji, color: ev.agent_color };
-    const data = ev.payload?.data;
     const cited = citedSources(ev.report, ev.sources);
-    const fields = data && typeof data === "object" && !Array.isArray(data) ? Object.entries(data) : [];
     const comment = h("textarea", { class: "textarea", rows: 2, placeholder: "处置说明（可选），例如：已通知现场负责人整改" });
     const review = async (action) => {
       try {
@@ -181,7 +245,8 @@ export function eventsView({ params }) {
         toast(err.message, "error");
       }
     };
-    fill(detailEl, 
+    fill(
+      detailEl,
       h("button", { class: "btn btn-ghost btn-sm only-mobile back-btn", type: "button", onclick: () => (split.classList.remove("has-detail"), (st.selected = null), replacePath("/events")) }, icon("chevronLeft", 15), "返回列表"),
       h(
         "div",
@@ -190,14 +255,7 @@ export function eventsView({ params }) {
         h("h2", null, ev.title),
         h("div", { class: "ev-agent" }, avatar(agent, "sm"), h("span", null, agent.name), ev.model_label ? h("span", { class: "muted small" }, `· ${ev.model_label}`) : null, ...modeBadges(ev)),
       ),
-      h(
-        "section",
-        { class: "card ev-card" },
-        h("div", { class: "section-title" }, icon("database", 16), "事件数据"),
-        fields.length
-          ? h("div", { class: "kv" }, ...fields.flatMap(([k, v]) => [h("div", { class: "kv-k" }, k), h("div", { class: "kv-v" }, typeof v === "object" ? (Array.isArray(v) ? v.join("、") : JSON.stringify(v)) : String(v))]))
-          : h("pre", { class: "code-box" }, JSON.stringify(data, null, 2) || "无"),
-      ),
+      h("section", { class: "card ev-card" }, h("div", { class: "section-title" }, icon("database", 16), "事件数据"), eventDataBlock(ev)),
       h(
         "section",
         { class: "card ev-card" },
@@ -228,7 +286,6 @@ export function eventsView({ params }) {
               "div",
               { class: "form-actions" },
               h("button", { class: "btn", type: "button", onclick: () => followUp(ev) }, icon("chat", 15), "继续追问"),
-              h("div", { class: "grow" }),
               h("button", { class: "btn btn-danger", type: "button", onclick: () => review("reject") }, icon("x", 15), "驳回"),
               h("button", { class: "btn btn-primary", type: "button", onclick: () => review("approve") }, icon("check", 15), "确认处置"),
             ),
@@ -236,10 +293,12 @@ export function eventsView({ params }) {
         : ev.status !== "processing"
           ? h(
               "section",
-              { class: "card ev-card" },
+              { class: "card ev-card review" },
               h("div", { class: "section-title" }, icon("clock", 16), "处理记录"),
-              ev.reviewed_at ? h("p", { style: { margin: 0 } }, `${ev.status === "approved" ? "已确认处置" : "已驳回"} · ${fmtDate(ev.reviewed_at, true)}`, ev.review_comment ? h("div", { class: "muted" }, ev.review_comment) : null) : h("p", { class: "muted", style: { margin: 0 } }, ev.error || "未处理"),
-              h("div", { class: "form-actions" }, h("button", { class: "btn", type: "button", onclick: () => followUp(ev) }, icon("chat", 15), ev.conv_id ? "打开追问对话" : "继续追问")),
+              ev.reviewed_at
+                ? h("p", { style: { margin: "0 0 12px" } }, `${ev.status === "approved" ? "已确认处置" : "已驳回"} · ${fmtDate(ev.reviewed_at, true)}`, ev.review_comment ? h("div", { class: "muted" }, ev.review_comment) : null)
+                : h("p", { class: "muted", style: { margin: "0 0 12px" } }, ev.error || "未处理"),
+              h("div", { class: "form-actions" }, h("button", { class: "btn btn-primary", type: "button", onclick: () => followUp(ev) }, icon("chat", 15), ev.conv_id ? "打开追问对话" : "继续追问")),
             )
           : null,
     );

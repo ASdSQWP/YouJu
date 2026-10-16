@@ -51,7 +51,9 @@ def _level(text: str, algorithms: list[str]) -> str:
 
 
 def _detector(text: str) -> str:
-    if any(word in text for word in ("大模型", "视觉模型", "多模态", "vlm", "VLM")):
+    if any(word in text for word in ("后处理", "复核", "小模型加大模型", "small_then_vlm")):
+        return "small_then_vlm"
+    if any(word in text for word in ("大模型", "视觉模型", "多模态", "vlm", "VLM", "仅大模型")):
         return "vlm"
     return "small"
 

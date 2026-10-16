@@ -21,6 +21,7 @@ route("/agents/:id", agentEditView);
 route("/kbs", kbListView);
 route("/kbs/:id", kbDetailView);
 route("/vision/rules", visionView);
+route("/vision/media", visionView);
 route("/vision", visionView);
 route("/vision/:id", visionView);
 route("/events", eventsView);

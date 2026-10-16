@@ -194,7 +194,7 @@ export function kbDetailView({ params, query }) {
       input,
       h("div", { class: "dropzone-icon" }, icon("upload", 22)),
       h("div", { class: "dropzone-title" }, "拖拽文件到这里，或点击选择"),
-      h("div", { class: "muted small" }, "支持 PDF、Word（.docx）、Markdown、TXT、HTML、CSV、Excel，单个文件不超过 20 MB。中文 GBK 编码的文本也能识别。"),
+      h("div", { class: "muted small" }, "支持 PDF、Word（.docx）、Markdown、TXT、HTML、CSV、Excel，单个文件不超过 500 MB。中文 GBK 编码的文本也能识别。"),
     );
     zone.addEventListener("dragover", (e) => {
       e.preventDefault();

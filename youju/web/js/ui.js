@@ -1,4 +1,4 @@
-import { ICONS, LOGO } from "./icons.js";
+import { ICONS, LOGO } from "./icons.js?v=20261016h";
 
 export function h(tag, props, ...children) {
   const el = document.createElement(tag);
@@ -53,6 +53,34 @@ export function toast(message, kind = "info", ms = 2800) {
     el.classList.add("leaving");
     setTimeout(() => el.remove(), 220);
   }, ms);
+}
+
+export function openImageLightbox(src, alt = "预览") {
+  if (!src) return;
+  const backdrop = h("div", { class: "img-lightbox", role: "dialog", "aria-modal": "true", "aria-label": alt });
+  let closed = false;
+  const onKey = (e) => {
+    if (e.key === "Escape") close();
+  };
+  function close() {
+    if (closed) return;
+    closed = true;
+    document.removeEventListener("keydown", onKey);
+    backdrop.classList.add("leaving");
+    setTimeout(() => backdrop.remove(), 160);
+  }
+  const img = h("img", { src, alt, class: "img-lightbox-pic", draggable: "false" });
+  fill(
+    backdrop,
+    h("button", { class: "img-lightbox-close icon-btn", type: "button", title: "关闭", onclick: close }, icon("x")),
+    img,
+  );
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop || e.target === img) close();
+  });
+  document.addEventListener("keydown", onKey);
+  document.body.append(backdrop);
+  return { close };
 }
 
 export function modal({ title, body, actions = [], width = 520, onClose } = {}) {

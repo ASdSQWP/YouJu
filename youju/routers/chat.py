@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -17,7 +18,10 @@ from youju.agent.runner import AgentSnapshot, RunInput, run
 from youju.answers import new_state, save_answer, track
 from youju.db import get_db, iso, utcnow
 from youju.deps import can_read, current_user
-from youju.models import Agent, Conversation, Message, User
+from youju.vision.install_upload import install_uploads
+from youju.chatfiles import store_upload
+from youju.config import settings
+from youju.models import Agent, ChatUpload, Conversation, McpClient, Message, User
 from youju.serial import message_public
 
 router = APIRouter(tags=["chat"])
@@ -49,11 +53,46 @@ class ChatBody(BaseModel):
     content: str | None = Field(default=None, max_length=8000)
     model: str | None = Field(default=None, max_length=160)
     regenerate: bool = False
+    attachment_ids: list[int] = Field(default_factory=list)
 
 
 class FeedbackBody(BaseModel):
     rating: int = Field(ge=-1, le=1)
     note: str = Field(default="", max_length=500)
+
+
+def _take_uploads(db: Session, user: User, ids: list[int]) -> list[dict]:
+    if not ids:
+        return []
+    rows = db.scalars(select(ChatUpload).where(ChatUpload.id.in_(ids), ChatUpload.user_id == user.id)).all()
+    found = {row.id: row for row in rows}
+    missing = [i for i in ids if i not in found]
+    if missing:
+        raise HTTPException(status_code=400, detail="有附件不存在或没有权限")
+    return [_upload_public(found[i]) for i in ids]
+
+
+def _upload_public(row: ChatUpload) -> dict:
+    return {
+        "id": row.id,
+        "name": row.name,
+        "kind": row.kind,
+        "mime": row.mime,
+        "size": row.size,
+        "url": f"/api/chat/uploads/{row.id}",
+    }
+
+
+def _question_text(content: str, attachments: list[dict], installed: list[str] | None = None) -> str:
+    lines = [content] if content else []
+    if installed:
+        lines.append("系统已写入配置（这些已经生效，请直接向用户确认，不要说没有权限）：")
+        lines.extend(f"- {note}" for note in installed)
+    if attachments:
+        lines.append("用户上传的文件（已按日期和类型保存在平台）：")
+        for item in attachments:
+            lines.append(f"- {item.get('kind')} · {item.get('name')}")
+    return "\n".join(lines).strip()
 
 
 def short_title(text: str) -> str:
@@ -152,20 +191,27 @@ def chat(conv_id: int, body: ChatBody, user: User = Depends(current_user), db: S
         history = msgs[:-1]
     else:
         content = (body.content or "").strip()
-        if not content:
+        attachments = _take_uploads(db, user, body.attachment_ids)
+        if not content and not attachments:
             raise HTTPException(status_code=400, detail="消息不能为空")
-        question = Message(conv_id=conv.id, role="user", content=content)
+        question = Message(conv_id=conv.id, role="user", content=content or "请看我上传的文件", attachments=attachments)
         db.add(question)
         history = msgs
         if not msgs and conv.title in ("", "新对话"):
-            conv.title = short_title(content)
+            conv.title = short_title(content or (attachments[0]["name"] if attachments else "新对话"))
+    installed = install_uploads(db, user, agent, [item["id"] for item in (question.attachments or [])])
     conv.updated_at = utcnow()
     db.commit()
+    servers = [
+        {"id": row.id, "name": row.name, "url": row.url, "tools": list(row.tools or [])}
+        for row in db.scalars(select(McpClient).where(McpClient.owner_id == user.id, McpClient.enabled.is_(True))).all()
+    ]
     inp = RunInput(
         agent=AgentSnapshot.of(agent),
-        question=question.content,
+        question=_question_text(question.content, list(question.attachments or []), installed),
         history=[{"role": m.role, "content": m.content} for m in history if m.role in ("user", "assistant")],
         model_ref=body.model,
+        mcp_servers=servers,
     )
     start = {"type": "start", "conversation_id": conv.id, "user_message_id": question.id, "title": conv.title}
     db.commit()
@@ -194,6 +240,44 @@ async def stream_answer(conv_id: int, inp: RunInput, start: dict):
     finally:
         if not saved:
             save_answer(conv_id, partial=state)
+
+
+@router.post("/api/chat/uploads")
+async def upload_chat_files(files: list[UploadFile] = File(...), user: User = Depends(current_user), db: Session = Depends(get_db)):
+    limit = settings.max_upload_mb * 1024 * 1024
+    created = []
+    for upload in files:
+        name = upload.filename or "file"
+        data = await upload.read()
+        if not data:
+            raise HTTPException(status_code=400, detail=f"「{name}」是空文件")
+        if len(data) > limit:
+            raise HTTPException(status_code=400, detail=f"「{name}」超过 {settings.max_upload_mb} MB")
+        row = ChatUpload(user_id=user.id, name=name[:255], kind="other", mime=(upload.content_type or "")[:80], size=len(data), path="")
+        db.add(row)
+        db.flush()
+        try:
+            kind, safe, path = store_upload(user.id, row.id, name, data)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        row.kind = kind
+        row.name = safe
+        row.path = str(path)
+        created.append(row)
+    db.commit()
+    return {"uploads": [_upload_public(row) for row in created]}
+
+
+@router.get("/api/chat/uploads/{upload_id}")
+def download_chat_upload(upload_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    row = db.get(ChatUpload, upload_id)
+    if row is None or row.user_id != user.id:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    path = Path(row.path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="文件已经不在")
+    return Response(path.read_bytes(), media_type=row.mime or "application/octet-stream")
 
 
 @router.post("/api/messages/{message_id}/feedback")

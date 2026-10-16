@@ -17,6 +17,8 @@ def seed_vision(db: Session, owner: User | None = None) -> None:
         return
     safety = db.scalar(select(Agent).where(Agent.template == "safety").order_by(Agent.id))
     created: list[VisionSource] = []
+    from youju.vision.catalog import CATEGORY_BY_SCENARIO
+
     for item in DEMO_SOURCES:
         src = VisionSource(
             owner_id=owner.id,
@@ -25,6 +27,9 @@ def seed_vision(db: Session, owner: User | None = None) -> None:
             kind=item["kind"],
             uri=item["uri"],
             scenario=item["scenario"],
+            category=CATEGORY_BY_SCENARIO.get(item["scenario"], "other"),
+            visibility="team",
+            shared_user_ids=[],
             status="idle",
         )
         db.add(src)

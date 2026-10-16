@@ -15,19 +15,33 @@ RULES = {
         "1. 只依据「参考资料」回答。资料没有覆盖的内容，直接说明资料中没有相关依据，不要猜测，也不要用常识补全结论。\n"
         "2. 每个关键结论后用方括号标注来源编号，例如：……需要立即停止作业[1]。多个来源写成[1][2]。\n"
         "3. 只能使用参考资料里出现过的编号。\n"
-        "4. 使用与用户相同的语言作答；先给结论，步骤类内容用有序列表。"
+        "4. 使用与用户相同的语言作答；先给结论，步骤类内容用有序列表。\n"
+        "5. 若用户是在要求配置模型、检测或权重（而不是问制度事实），按「配置协助」处理，不要只用拒答收尾。"
     ),
     "agent": (
         "## 工作方式\n"
         "1. 回答事实性问题前先调用 search_knowledge 检索；资料不够时换关键词再检索，最多 3 次。\n"
         "2. 只依据检索结果作答，每个关键结论后标注检索结果里的编号，例如：……[2]。\n"
         "3. 检索不到依据时，明确说明资料中没有相关依据，不要编造。\n"
-        "4. 使用与用户相同的语言作答；先给结论，步骤类内容用有序列表。"
+        "4. 使用与用户相同的语言作答；先给结论，步骤类内容用有序列表。\n"
+        "5. 若用户是在要求配置模型、检测或权重，按「配置协助」处理，不要把整段回答换成拒答。"
     ),
     "chat": "使用与用户相同的语言作答，准确、简洁；不确定的内容要明确说明不确定。",
 }
 
-SMALLTALK = "用户在寒暄或询问你能做什么。简短友好地回应，介绍你能基于哪些资料回答什么问题，不要编造资料内容。"
+SMALLTALK = "用户在寒暄或询问你能做什么。简短友好地回应，介绍你能基于哪些资料回答什么问题，也可以协助配置视觉检测模型，不要编造资料内容。"
+
+CONFIG_GUIDE = (
+    "## 配置协助\n"
+    "用户可以要求把上传的模型或配置写入平台。按下面做：\n"
+    "1. 若消息里已经有「系统已写入配置」，直接用中文确认写了什么，不要说自己没有权限，也不要再让用户手工去设置页重复操作。\n"
+    "2. 知识库里没有模型下载地址时，不要编造网址，也不要给这段说明标注来源编号。对话不能从网上下载权重。\n"
+    "3. 用户上传的 .pt / .onnx 会安装到 data/models，并切换视觉小模型；JSON 里的 small_model、vlm_model、yolo_path、model_ref 会写入平台。"
+    "API Key 仍只在「设置 → 模型服务」由管理员保存。\n"
+    "4. 制度、规程类结论仍然只依据参考资料并标注编号。"
+)
+
+_CONFIG = ("yolo", "ultralytics", ".pt", "权重", "小模型", "看图", "视觉检测", "配置模型", "下载模型", "接入模型", "开放模型")
 
 LEVELS = {"critical": "紧急", "high": "高", "medium": "中", "low": "低", "info": "提示"}
 
@@ -44,7 +58,7 @@ def system_prompt(agent, mode: str, kb_names: list[str]) -> str:
     if kb_names:
         base += f"\n\n可用知识库：{'、'.join(kb_names)}。"
     rules = RULES["chat"] if not kb_names else RULES.get(mode, RULES["rag"])
-    return f"{base}\n\n{rules}\n\n当前时间：{now_text()}。"
+    return f"{base}\n\n{rules}\n\n{CONFIG_GUIDE}\n\n当前时间：{now_text()}。"
 
 
 def rag_message(question: str, book, evidence: bool, strict: bool) -> str:
@@ -79,6 +93,11 @@ def search_query(question: str, history_items: list[dict]) -> str:
     if previous and (len(question) <= 12 or any(word in question for word in _REFER)):
         return f"{previous} {question}"[:400]
     return question[:400]
+
+
+def is_config_request(question: str) -> bool:
+    text = (question or "").strip().lower()
+    return any(word in text for word in _CONFIG)
 
 
 def is_smalltalk(question: str) -> bool:

@@ -84,6 +84,7 @@ class RunInput:
     history: list[dict] = field(default_factory=list)
     model_ref: str | None = None
     event: dict | None = None
+    mcp_servers: list[dict] = field(default_factory=list)
 
 
 class Run:
@@ -230,7 +231,7 @@ async def _pipeline(r: Run, provider, kbs: list[tuple[int, str]]) -> AsyncIterat
         yield r.event(r.end(step, detail=detail, hits=len(result.hits), evidence=evidence))
         if len(r.book):
             yield {"type": "sources", "sources": r.book.items}
-        if not evidence and agent.strict:
+        if not evidence and agent.strict and not prompts.is_config_request(inp.question or ""):
             r.refused = True
             guard = r.start("guard", "没有足够依据，按严格模式拒答")
             yield r.event(r.end(guard))
@@ -249,6 +250,8 @@ async def _pipeline(r: Run, provider, kbs: list[tuple[int, str]]) -> AsyncIterat
     system = prompts.system_prompt(agent, "rag", [n for _, n in kbs] if with_sources else [])
     if smalltalk:
         system += "\n\n" + prompts.SMALLTALK
+    elif prompts.is_config_request(inp.question or ""):
+        system += "\n\n当前问题是配置协助，不要因资料不足而整段拒答。"
     question = prompts.event_question(inp.event) if inp.event else inp.question
     content = prompts.rag_message(question, r.book, evidence, agent.strict) if with_sources else question
     messages = [{"role": "system", "content": system}, *prompts.history(inp.history), {"role": "user", "content": content}]
@@ -305,11 +308,18 @@ async def _agent(r: Run, provider, kbs: list[tuple[int, str]]) -> AsyncIterator[
             yield ev
         return
     names = [name for _, name in kbs]
-    toolbox = ToolBox(kbs, r.book, agent.top_k, agent.strictness)
-    specs = tool_specs(names)
+    toolbox = ToolBox(kbs, r.book, agent.top_k, agent.strictness, mcp_servers=list(inp.mcp_servers or []))
+    specs = tool_specs(names, mcp=bool(inp.mcp_servers))
     question = prompts.event_question(inp.event) if inp.event else inp.question
+    system = prompts.system_prompt(agent, "agent", names)
+    if inp.mcp_servers:
+        lines = ["已连接外部 MCP。需要时调用 use_mcp，server 填服务名，tool 填工具名。"]
+        for server in inp.mcp_servers:
+            names_ = "、".join(t.get("name") or "" for t in server.get("tools") or []) or "尚未拉到工具"
+            lines.append(f"- {server.get('name')}: {names_}")
+        system += "\n\n" + "\n".join(lines)
     messages = [
-        {"role": "system", "content": prompts.system_prompt(agent, "agent", names)},
+        {"role": "system", "content": system},
         *prompts.history(inp.history),
         {"role": "user", "content": question},
     ]
@@ -369,7 +379,7 @@ async def _agent(r: Run, provider, kbs: list[tuple[int, str]]) -> AsyncIterator[
         r.text = r.turn_text
         yield r.event(r.end(step, detail=r.usage_text()))
         break
-    if agent.strict and not toolbox.evidence:
+    if agent.strict and not toolbox.evidence and not prompts.is_config_request(inp.question or ""):
         r.refused = True
         r.text = EVENT_REFUSAL if inp.event else REFUSAL
         guard = r.start("guard", "没有检索到足够依据，已替换为拒答")

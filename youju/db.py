@@ -52,9 +52,43 @@ def get_db() -> Iterator[Session]:
         db.close()
 
 
+def _sqlite_add_columns() -> None:
+    """给已有 SQLite 库补列；create_all 不会改旧表。"""
+    if not settings.database_url.startswith("sqlite"):
+        return
+    patches = {
+        "detection_alerts": [
+            ("snapshot_path", "VARCHAR(500) DEFAULT ''"),
+            ("evidence", "JSON"),
+        ],
+        "messages": [
+            ("attachments", "JSON"),
+        ],
+        "detection_rules": [
+            ("small_model", "VARCHAR(80) DEFAULT 'demo'"),
+            ("vlm_model", "VARCHAR(160) DEFAULT ''"),
+        ],
+        "vision_sources": [
+            ("category", "VARCHAR(32) DEFAULT 'other'"),
+            ("visibility", "VARCHAR(16) DEFAULT 'private'"),
+            ("shared_user_ids", "JSON"),
+            ("folder_id", "INTEGER"),
+        ],
+    }
+    with engine.begin() as conn:
+        for table, cols in patches.items():
+            existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+            if not existing:
+                continue
+            for name, decl in cols:
+                if name not in existing:
+                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+
 def init_db() -> None:
     from youju import models  # noqa: F401
 
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(engine)
+    _sqlite_add_columns()

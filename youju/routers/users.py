@@ -56,6 +56,18 @@ def update_me(body: ProfileBody, user: User = Depends(current_user), db: Session
     return user_public(user)
 
 
+@router.get("/api/users/directory")
+def user_directory(_user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """登录用户可选人共享媒体；不含密码与敏感字段。"""
+    rows = db.scalars(select(User).where(User.disabled.is_(False)).order_by(User.id)).all()
+    return {
+        "users": [
+            {"id": u.id, "username": u.username, "display_name": u.display_name, "role": u.role}
+            for u in rows
+        ]
+    }
+
+
 @router.get("/api/users")
 def list_users(_admin: User = Depends(admin_user), db: Session = Depends(get_db)):
     return {"users": [user_public(u) for u in db.scalars(select(User).order_by(User.id)).all()]}

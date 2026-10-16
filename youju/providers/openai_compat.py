@@ -78,7 +78,12 @@ class OpenAICompatProvider:
                     {"role": "tool", "tool_call_id": msg["tool_call_id"], "content": msg.get("content") or ""}
                 )
             else:
-                out.append({"role": role, "content": msg.get("content") or ""})
+                content = msg.get("content")
+                # 多模态：content 可以是带 image_url 的数组，原样上送
+                if isinstance(content, list):
+                    out.append({"role": role, "content": content})
+                else:
+                    out.append({"role": role, "content": content or ""})
         return out
 
     async def stream(

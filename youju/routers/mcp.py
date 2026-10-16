@@ -7,19 +7,96 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from youju import __version__
 from youju.agent.runner import AgentSnapshot, RunInput, collect
 from youju.db import SessionLocal
 from youju.deps import current_user, visible
-from youju.models import Agent, KnowledgeBase, User
+from youju.db import get_db
+from youju.mcp_remote import list_tools
+from youju.models import Agent, KnowledgeBase, McpClient, User
 from youju.rag.retrieve import retrieve
 from youju.routers.openai_api import references
 
 router = APIRouter(tags=["mcp"])
+
+
+class McpClientBody(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    url: str = Field(min_length=8, max_length=500)
+
+
+def _client_public(row: McpClient) -> dict:
+    return {
+        "id": row.id,
+        "name": row.name,
+        "url": row.url,
+        "enabled": row.enabled,
+        "tools": list(row.tools or []),
+        "last_error": row.last_error or "",
+    }
+
+
+@router.get("/api/mcp/clients")
+def list_mcp_clients(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = db.scalars(select(McpClient).where(McpClient.owner_id == user.id).order_by(McpClient.id)).all()
+    return {"clients": [_client_public(row) for row in rows]}
+
+
+@router.post("/api/mcp/clients")
+def add_mcp_client(body: McpClientBody, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    url = body.url.strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="MCP 地址需要以 http:// 或 https:// 开头")
+    row = McpClient(owner_id=user.id, name=body.name.strip()[:80], url=url, enabled=True, tools=[], last_error="")
+    try:
+        row.tools = list_tools(url)
+    except Exception as exc:  # noqa: BLE001
+        row.last_error = str(exc)[:300]
+        row.enabled = False
+    db.add(row)
+    db.commit()
+    return _client_public(row)
+
+
+@router.post("/api/mcp/clients/{client_id}/refresh")
+def refresh_mcp_client(client_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    row = db.get(McpClient, client_id)
+    if row is None or row.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="MCP 服务不存在")
+    try:
+        row.tools = list_tools(row.url)
+        row.last_error = ""
+        row.enabled = True
+    except Exception as exc:  # noqa: BLE001
+        row.last_error = str(exc)[:300]
+    db.commit()
+    return _client_public(row)
+
+
+@router.patch("/api/mcp/clients/{client_id}")
+def patch_mcp_client(client_id: int, user: User = Depends(current_user), db: Session = Depends(get_db), enabled: bool = True):
+    row = db.get(McpClient, client_id)
+    if row is None or row.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="MCP 服务不存在")
+    row.enabled = enabled
+    db.commit()
+    return _client_public(row)
+
+
+@router.delete("/api/mcp/clients/{client_id}")
+def delete_mcp_client(client_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    row = db.get(McpClient, client_id)
+    if row is None or row.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="MCP 服务不存在")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
 
 VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 

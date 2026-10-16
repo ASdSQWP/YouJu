@@ -20,6 +20,10 @@ PACK_NAMES = {pack["key"]: pack["name"] for pack in PACKS}
 router = APIRouter(tags=["agents"])
 
 
+class ModelBindBody(BaseModel):
+    model_ref: str | None = Field(default=None, max_length=160)
+
+
 class AgentBody(BaseModel):
     name: str = Field(min_length=1, max_length=40)
     emoji: str = Field(default="✨", min_length=1, max_length=8)
@@ -132,6 +136,20 @@ def create_agent(body: AgentBody, user: User = Depends(current_user), db: Sessio
 @router.get("/api/agents/{agent_id}")
 def get_one(agent_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     return agent_public(db, get_agent(db, agent_id, user), user)
+
+
+@router.patch("/api/agents/{agent_id}/model")
+def bind_agent_model(agent_id: int, body: ModelBindBody, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """把对话里选中的大模型写回这个智能体。"""
+    agent = get_agent(db, agent_id, user, write=True)
+    ref = (body.model_ref or "").strip() or None
+    if ref and ref != LOCAL_CHAT:
+        _, info = find_model(db, ref)
+        if info is None or info.type != "chat":
+            raise HTTPException(status_code=400, detail="选择的对话模型不可用")
+    agent.model_ref = None if ref in (None, LOCAL_CHAT) else ref
+    db.commit()
+    return agent_public(db, agent, user)
 
 
 @router.put("/api/agents/{agent_id}")

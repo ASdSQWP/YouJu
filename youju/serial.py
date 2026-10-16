@@ -52,6 +52,7 @@ def message_public(msg) -> dict:
         "error": msg.error,
         "feedback": msg.feedback,
         "feedback_note": msg.feedback_note,
+        "attachments": list(getattr(msg, "attachments", None) or []),
         "created_at": iso(msg.created_at),
     }
 
@@ -93,15 +94,25 @@ def event_public(ev, agent=None, brief: bool = False) -> dict:
     return data
 
 
-def source_public(src, boxes=None, tick=0) -> dict:
+def source_public(src, boxes=None, tick=0, owner=None, viewer=None) -> dict:
     extra = src.extra or {}
+    can_edit = False
+    if viewer is not None:
+        can_edit = viewer.role == "admin" or src.owner_id == viewer.id
     return {
         "id": src.id,
+        "owner_id": src.owner_id,
+        "owner_name": (owner.display_name if owner else "") or (owner.username if owner else ""),
         "name": src.name,
         "code": src.code,
         "kind": src.kind,
         "uri": src.uri,
         "scenario": src.scenario,
+        "category": getattr(src, "category", None) or "other",
+        "visibility": getattr(src, "visibility", None) or "private",
+        "shared_user_ids": list(getattr(src, "shared_user_ids", None) or []),
+        "folder_id": getattr(src, "folder_id", None),
+        "can_edit": can_edit,
         "status": src.status,
         "filename": src.filename,
         "mime": src.mime,
@@ -114,6 +125,9 @@ def source_public(src, boxes=None, tick=0) -> dict:
         "media_url": f"/api/vision/sources/{src.id}/media" if src.kind == "file" else "",
         "frame_url": f"/api/vision/sources/{src.id}/frame",
         "preview_kind": extra.get("preview") or ("video" if (src.mime or "").startswith("video/") else "image" if src.kind == "file" else "demo"),
+        "vlm_skipped": bool(extra.get("vlm_skipped")),
+        "vlm_hint": extra.get("vlm_hint") or "",
+        "vlm_analyzed": bool(extra.get("vlm_analyzed")),
     }
 
 
@@ -129,6 +143,8 @@ def rule_public(rule, source=None, agent=None) -> dict:
         "cooldown_sec": rule.cooldown_sec,
         "level": rule.level,
         "detector": rule.detector,
+        "small_model": getattr(rule, "small_model", None) or "demo",
+        "vlm_model": getattr(rule, "vlm_model", None) or "",
         "agent_id": rule.agent_id,
         "agent_name": agent.name if agent else "",
         "agent_emoji": agent.emoji if agent else "",
@@ -141,6 +157,7 @@ def rule_public(rule, source=None, agent=None) -> dict:
 
 
 def alert_public(alert, source=None, rule=None) -> dict:
+    has_snap = bool(getattr(alert, "snapshot_path", None))
     return {
         "id": alert.id,
         "source_id": alert.source_id,
@@ -155,6 +172,9 @@ def alert_public(alert, source=None, rule=None) -> dict:
         "confidence": alert.confidence,
         "detector": alert.detector,
         "tick": alert.tick,
+        "evidence": list(getattr(alert, "evidence", None) or []),
+        "has_snapshot": has_snap,
+        "snapshot_url": f"/api/vision/alerts/{alert.id}/snapshot" if has_snap else "",
         "event_id": alert.event_id,
         "status": alert.status,
         "created_at": iso(alert.created_at),

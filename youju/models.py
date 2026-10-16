@@ -144,6 +144,36 @@ class Agent(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+class ChatUpload(Base):
+    """对话里上传的图片或文件，按日期和类型分目录存放。"""
+
+    __tablename__ = "chat_uploads"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    kind: Mapped[str] = mapped_column(String(16), default="other")
+    mime: Mapped[str] = mapped_column(String(80), default="")
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    path: Mapped[str] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class McpClient(Base):
+    """对话可连接的外部 MCP 服务。"""
+
+    __tablename__ = "mcp_clients"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    url: Mapped[str] = mapped_column(String(500))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    tools: Mapped[Any] = mapped_column(JSON, default=list)
+    last_error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
@@ -178,6 +208,7 @@ class Message(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     feedback: Mapped[int] = mapped_column(Integer, default=0)
     feedback_note: Mapped[str] = mapped_column(Text, default="")
+    attachments: Mapped[Any] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
@@ -233,6 +264,17 @@ class EvalRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class VisionFolder(Base):
+    """媒体库文件夹，里面可以放图片或视频。"""
+
+    __tablename__ = "vision_folders"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class VisionSource(Base):
     __tablename__ = "vision_sources"
 
@@ -243,6 +285,10 @@ class VisionSource(Base):
     kind: Mapped[str] = mapped_column(String(16), default="demo")
     uri: Mapped[str] = mapped_column(String(500), default="")
     scenario: Mapped[str] = mapped_column(String(32), default="")
+    category: Mapped[str] = mapped_column(String(32), default="other")
+    visibility: Mapped[str] = mapped_column(String(16), default="private")
+    shared_user_ids: Mapped[Any] = mapped_column(JSON, default=list)
+    folder_id: Mapped[int | None] = mapped_column(ForeignKey("vision_folders.id", ondelete="SET NULL"), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(16), default="idle", index=True)
     filename: Mapped[str] = mapped_column(String(255), default="")
     mime: Mapped[str] = mapped_column(String(64), default="")
@@ -266,6 +312,8 @@ class DetectionRule(Base):
     cooldown_sec: Mapped[int] = mapped_column(Integer, default=20)
     level: Mapped[str] = mapped_column(String(16), default="medium")
     detector: Mapped[str] = mapped_column(String(16), default="small")
+    small_model: Mapped[str] = mapped_column(String(80), default="demo")
+    vlm_model: Mapped[str] = mapped_column(String(160), default="")
     agent_id: Mapped[int | None] = mapped_column(ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_push: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -287,6 +335,8 @@ class DetectionAlert(Base):
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     detector: Mapped[str] = mapped_column(String(16), default="small")
     tick: Mapped[int] = mapped_column(Integer, default=0)
+    snapshot_path: Mapped[str] = mapped_column(String(500), default="")
+    evidence: Mapped[Any] = mapped_column(JSON, default=list)
     event_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="open", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)

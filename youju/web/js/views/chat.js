@@ -1,5 +1,5 @@
 import { api, streamSSE } from "../api.js";
-import { fill, confirmDialog, copyText, emptyState, h, icon, menu, modal, openSidebar, promptDialog, toast } from "../ui.js?v=20261015b";
+import { fill, confirmDialog, copyText, emptyState, h, icon, menu, modal, openSidebar, promptDialog, toast } from "../ui.js?v=20261016i";
 import { isAdmin, loadAgents, loadConversations, loadModels, store } from "../state.js";
 import { navigate, replacePath } from "../router.js";
 import { stripCitations, usedNumbers } from "../markdown.js";
@@ -127,10 +127,24 @@ export function chatView({ params, query }) {
           label: m.local ? "离线摘录（不调用模型）" : m.model,
           sub: m.local ? "直接摘录资料原文，没有模型时也能用" : m.tools ? "支持工具调用" : "检索增强",
           active: m.ref === st.model,
-          onClick: () => {
+          onClick: async () => {
             st.model = m.ref;
             localStorage.setItem(`yj-model-${st.agent.id}`, m.ref);
             renderHeader();
+            if (st.agent?.can_edit) {
+              try {
+                const updated = await api(`/api/agents/${st.agent.id}/model`, {
+                  method: "PATCH",
+                  body: { model_ref: m.local ? null : m.ref },
+                });
+                st.agent = { ...st.agent, ...updated };
+                const row = store.agents.find((a) => a.id === st.agent.id);
+                if (row) row.model_ref = updated.model_ref;
+                toast(`已将「${st.agent.name}」的对话模型改为${m.local ? "离线摘录" : m.model}`, "ok");
+              } catch (err) {
+                toast(err.message || "模型已在本次对话切换，但没有写回智能体", "error");
+              }
+            }
             if (!st.messages.length) renderThread();
           },
         });
@@ -203,7 +217,23 @@ export function chatView({ params, query }) {
   }
 
   function userMessage(m) {
-    const el = h("div", { class: "msg msg-user" }, h("div", { class: "bubble" }, m.content));
+    const files = m.attachments || [];
+    const el = h(
+      "div",
+      { class: "msg msg-user" },
+      files.length
+        ? h(
+            "div",
+            { class: "msg-files" },
+            ...files.map((file) =>
+              file.kind === "images"
+                ? h("img", { class: "msg-file-img", src: file.url, alt: file.name, title: file.name })
+                : h("a", { class: "msg-file", href: file.url, target: "_blank", rel: "noreferrer" }, icon("file", 14), file.name),
+            ),
+          )
+        : null,
+      h("div", { class: "bubble" }, m.content),
+    );
     m._el = el;
     return el;
   }
@@ -426,7 +456,8 @@ export function chatView({ params, query }) {
 
   async function send(text, regenerate = false) {
     text = (text || "").trim();
-    if (st.streaming || !st.agent || (!text && !regenerate)) return;
+    const attached = regenerate ? { ids: [], copies: [] } : composer.takeAttachments();
+    if (st.streaming || !st.agent || (!text && !regenerate && !attached.ids.length)) return;
     if (!st.convId) {
       try {
         const conv = await api("/api/conversations", { method: "POST", body: { agent_id: st.agent.id } });
@@ -441,7 +472,7 @@ export function chatView({ params, query }) {
     if (regenerate) {
       while (st.messages.length && st.messages[st.messages.length - 1].role === "assistant") st.messages.pop();
     } else {
-      st.messages.push({ role: "user", content: text });
+      st.messages.push({ role: "user", content: text || "请看我上传的文件", attachments: attached.copies });
       composer.clear();
     }
     const ai = { role: "assistant", content: "", reasoning: "", sources: [], trace: [], streaming: true, model: modelInfo() };
@@ -454,7 +485,12 @@ export function chatView({ params, query }) {
     const controller = new AbortController();
     st.controller = controller;
     try {
-      await streamSSE(`/api/conversations/${st.convId}/chat`, { content: regenerate ? null : text, model: st.model, regenerate }, (ev) => onEvent(ai, ev), controller.signal);
+      await streamSSE(
+        `/api/conversations/${st.convId}/chat`,
+        { content: regenerate ? null : text, model: st.model, regenerate, attachment_ids: attached.ids },
+        (ev) => onEvent(ai, ev),
+        controller.signal,
+      );
     } catch (err) {
       if (err.name === "AbortError") ai.stopped = true;
       else ai.error = err.message;
@@ -611,10 +647,14 @@ export function chatView({ params, query }) {
   }
 
   function createComposer() {
+    const pending = [];
+    let mcpClients = [];
     const input = h("textarea", { class: "composer-input", rows: 1 });
     const button = h("button", { class: "send-btn", type: "button" });
     const tools = h("div", { class: "composer-tools" });
-    const box = h("div", { class: "composer" }, input, h("div", { class: "composer-bar" }, tools, button));
+    const files = h("div", { class: "composer-files" });
+    const picker = h("input", { type: "file", multiple: true, hidden: true });
+    const box = h("div", { class: "composer" }, files, input, h("div", { class: "composer-bar" }, tools, button));
     const el = h("div", { class: "composer-dock" }, box, h("div", { class: "composer-note" }, "回答由 AI 依据资料生成，关键操作请以引用原文为准"));
     const autosize = () => {
       input.style.height = "auto";
@@ -627,6 +667,17 @@ export function chatView({ params, query }) {
         e.preventDefault();
         send(input.value);
       }
+    });
+    picker.addEventListener("change", () => addFiles(picker.files));
+    box.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      box.classList.add("is-drop");
+    });
+    box.addEventListener("dragleave", () => box.classList.remove("is-drop"));
+    box.addEventListener("drop", (e) => {
+      e.preventDefault();
+      box.classList.remove("is-drop");
+      addFiles(e.dataTransfer?.files);
     });
     button.addEventListener("click", () => (st.streaming ? stop() : send(input.value)));
     box.addEventListener("mousedown", (e) => {
@@ -641,22 +692,164 @@ export function chatView({ params, query }) {
       input.disabled = !a;
       fill(button, icon(st.streaming ? "stop" : "arrowUp", 18));
       button.title = st.streaming ? "停止生成" : "发送";
-      button.disabled = !a || (!st.streaming && !input.value.trim());
+      button.disabled = !a || (!st.streaming && !input.value.trim() && !pending.length);
       button.classList.toggle("is-stop", st.streaming);
+      const mcpOn = mcpClients.filter((c) => c.enabled);
       fill(tools, 
         ...(a
           ? [
+              h("button", { class: "tool-chip tool-btn", type: "button", title: "上传图片或文件", onclick: () => picker.click() }, icon("paperclip", 14), "附件"),
+              h("button", { class: "tool-chip tool-btn", type: "button", title: "连接外部 MCP 工具", onclick: () => openMcp() }, icon("plug", 14), mcpOn.length ? `MCP ${mcpOn.length}` : "MCP"),
               a.kbs.length ? h("span", { class: "tool-chip", title: a.kbs.map((k) => k.name).join("、") }, icon("book", 14), a.kbs.length === 1 ? a.kbs[0].name : `${a.kbs.length} 个知识库`) : h("span", { class: "tool-chip" }, icon("sparkles", 14), "通用对话"),
               a.kbs.length && a.strict ? h("span", { class: "tool-chip tool-chip-accent" }, icon("shield", 14), "严格依据") : null,
               a.strategy === "agent" ? h("span", { class: "tool-chip" }, icon("zap", 14), "工具调用") : null,
             ]
           : []),
       );
+      fill(
+        files,
+        picker,
+        ...pending.map((file, index) =>
+          h(
+            "span",
+            { class: "composer-file" },
+            file.kind === "images" ? h("img", { src: file.url, alt: "" }) : icon("file", 14),
+            h("span", null, file.name),
+            h(
+              "button",
+              {
+                class: "icon-btn",
+                type: "button",
+                title: "移除",
+                onclick: () => {
+                  pending.splice(index, 1);
+                  update();
+                },
+              },
+              icon("x", 12),
+            ),
+          ),
+        ),
+      );
+      files.hidden = !pending.length;
     }
+    async function addFiles(list) {
+      const picked = [...(list || [])];
+      if (!picked.length) return;
+      const form = new FormData();
+      for (const file of picked) form.append("files", file);
+      try {
+        const res = await api("/api/chat/uploads", { method: "POST", form });
+        pending.push(...(res.uploads || []));
+        toast(`已上传 ${res.uploads?.length || 0} 个文件`, "ok");
+        update();
+      } catch (err) {
+        toast(err.message, "error");
+      }
+      picker.value = "";
+    }
+    async function loadMcp() {
+      try {
+        mcpClients = (await api("/api/mcp/clients")).clients || [];
+      } catch {
+        mcpClients = [];
+      }
+      update();
+    }
+    function openMcp() {
+      const name = h("input", { class: "input", placeholder: "名称，例如 文件系统", maxlength: 80 });
+      const url = h("input", { class: "input mono", placeholder: "http://127.0.0.1:3000/mcp" });
+      const list = h("div", { class: "mcp-list" });
+      const paintList = () => {
+        fill(
+          list,
+          mcpClients.length
+            ? mcpClients.map((client) =>
+                h(
+                  "div",
+                  { class: "mcp-row" },
+                  h("div", { class: "grow" }, h("b", null, client.name), h("div", { class: "muted small" }, client.last_error || (client.tools || []).map((t) => t.name).join("、") || client.url)),
+                  h(
+                    "button",
+                    {
+                      class: `btn btn-sm${client.enabled ? " btn-primary" : ""}`,
+                      type: "button",
+                      onclick: async () => {
+                        const updated = await api(`/api/mcp/clients/${client.id}?enabled=${client.enabled ? "false" : "true"}`, { method: "PATCH" });
+                        Object.assign(client, updated);
+                        paintList();
+                        update();
+                      },
+                    },
+                    client.enabled ? "已接入" : "未接入",
+                  ),
+                  h(
+                    "button",
+                    {
+                      class: "icon-btn",
+                      type: "button",
+                      title: "删除",
+                      onclick: async () => {
+                        await api(`/api/mcp/clients/${client.id}`, { method: "DELETE" });
+                        mcpClients = mcpClients.filter((c) => c.id !== client.id);
+                        paintList();
+                        update();
+                      },
+                    },
+                    icon("x", 14),
+                  ),
+                ),
+              )
+            : h("p", { class: "muted", style: { margin: 0 } }, "还没有外部工具。填入 MCP 地址后点连接。"),
+        );
+      };
+      paintList();
+      modal({
+        title: "外部 MCP 工具",
+        width: 560,
+        body: h(
+          "div",
+          { class: "form" },
+          h("p", { class: "muted", style: { marginTop: 0 } }, "连接后，工具调用模式的智能体可以在对话里使用这些工具。图片和文件仍通过左侧「附件」上传。"),
+          list,
+          fieldRow(name, url),
+        ),
+        actions: [
+          { label: "关闭" },
+          {
+            label: "连接",
+            kind: "primary",
+            onClick: async () => {
+              if (!name.value.trim() || !url.value.trim()) {
+                toast("请填写名称和地址", "error");
+                return false;
+              }
+              const created = await api("/api/mcp/clients", { method: "POST", body: { name: name.value.trim(), url: url.value.trim() } });
+              mcpClients.push(created);
+              if (created.last_error) toast(created.last_error, "error");
+              else toast(`已连接，${(created.tools || []).length} 个工具`, "ok");
+              paintList();
+              update();
+              return false;
+            },
+          },
+        ],
+      });
+    }
+    function fieldRow(name, url) {
+      return h("div", { class: "row-2" }, h("div", { class: "field" }, h("label", { class: "field-label" }, "名称"), name), h("div", { class: "field" }, h("label", { class: "field-label" }, "MCP 地址"), url));
+    }
+    loadMcp();
     return {
       el,
       update,
       focus: () => input.focus(),
+      takeAttachments() {
+        const ids = pending.map((file) => file.id);
+        const copies = pending.slice();
+        pending.length = 0;
+        return { ids, copies };
+      },
       clear: () => {
         input.value = "";
         autosize();

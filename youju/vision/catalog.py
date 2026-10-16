@@ -15,15 +15,30 @@ ALGORITHMS = [
 DETECTORS = [
     {
         "id": "small",
-        "name": "小模型检测",
+        "name": "仅小模型",
         "hint": "目标检测算法。演示用点位适配器回放结果，接入后可换成 YOLO / 自研小模型。",
     },
     {
         "id": "vlm",
-        "name": "视觉大模型",
-        "hint": "把抽帧画面送给多模态模型判断。未接入视觉模型时回落到算法适配器。",
+        "name": "仅大模型",
+        "hint": "把抽帧画面送给多模态模型判断。未配置对话模型时回落到算法适配器，大模型为可选项。",
+    },
+    {
+        "id": "small_then_vlm",
+        "name": "小模型 + 大模型后处理",
+        "hint": "先用小模型检出目标，再用大模型复核低置信度结果。未配置大模型时只跑小模型。",
     },
 ]
+
+CATEGORIES = [
+    {"id": "safety", "name": "高空安全"},
+    {"id": "hotwork", "name": "动火作业"},
+    {"id": "gate", "name": "出入口"},
+    {"id": "limit", "name": "限界监测"},
+    {"id": "other", "name": "其他"},
+]
+
+CATEGORY_BY_SCENARIO = {"tower": "safety", "hotwork": "hotwork", "gate": "gate", "limit": "limit"}
 
 SCENES = {
     "tower": {

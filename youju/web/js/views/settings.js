@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { fill, applyTheme, badge, confirmDialog, copyText, emptyState, field, fmtDate, h, icon, modal, openSidebar, segmented, spinner, switchInput, themePref, timeAgo, toast } from "../ui.js?v=20261015b";
+import { fill, applyTheme, badge, confirmDialog, copyText, emptyState, field, fmtDate, h, icon, modal, openSidebar, segmented, spinner, switchInput, themePref, timeAgo, toast } from "../ui.js?v=20261016f";
 import { isAdmin, loadAgents, loadModels, store } from "../state.js";
 import { navigate } from "../router.js";
 
@@ -20,6 +20,36 @@ export function settingsView({ params }) {
   const tabs = TABS.filter((t) => !t.admin || isAdmin());
   const active = tabs.find((t) => t.key === params.tab)?.key || tabs[0].key;
   const content = h("div", { class: "settings-content" });
+  let returnPath = "";
+  try {
+    returnPath = sessionStorage.getItem("youju_return") || "";
+  } catch {
+    returnPath = "";
+  }
+  const backBar = returnPath
+    ? h(
+        "div",
+        { class: "notice", style: { marginBottom: "12px" } },
+        "配置完模型后可返回视觉检测。",
+        " ",
+        h(
+          "button",
+          {
+            class: "btn btn-sm btn-primary",
+            type: "button",
+            onclick: () => {
+              try {
+                sessionStorage.removeItem("youju_return");
+              } catch {
+                /* ignore */
+              }
+              navigate(returnPath);
+            },
+          },
+          "返回视觉检测",
+        ),
+      )
+    : null;
   const el = h(
     "div",
     { class: "page" },
@@ -27,6 +57,7 @@ export function settingsView({ params }) {
       "div",
       { class: "page-inner" },
       h("div", { class: "page-head" }, h("div", { class: "page-title" }, h("button", { class: "icon-btn only-mobile", type: "button", onclick: openSidebar }, icon("menu")), h("div", null, h("h1", null, "设置"), h("p", null, "模型接入、成员、对外接口和个人偏好。")))),
+      backBar,
       h(
         "div",
         { class: "settings" },
@@ -137,6 +168,7 @@ async function modelsTab(root) {
       h("div", { class: "row-3" }, field("对话模型", chatSel, "智能体没有单独指定时使用"), field("向量模型", embedSel, "新建知识库时默认使用"), field("重排模型", rerankSel, "可选，开启后检索结果会再精排一次")),
       h("div", { class: "form-actions" }, h("button", { class: "btn btn-primary", type: "button", onclick: saveDefaults }, "保存默认模型")),
     ),
+    visionModelCard(),
     h("h3", { class: "block-title" }, `已接入 ${data.providers.length}`),
     configured,
     h("h3", { class: "block-title" }, "添加模型服务"),
@@ -159,6 +191,93 @@ async function modelsTab(root) {
               ),
             ),
         ),
+      ),
+    ),
+  );
+}
+
+function visionModelCard() {
+  const root = h("section", { class: "card form" }, h("div", { class: "loading-row" }, spinner(14), "加载视觉模型…"));
+  api("/api/vision/model-settings")
+    .then((cfg) => paintVisionModelCard(root, cfg))
+    .catch((err) => fill(root, h("p", { class: "text-danger" }, err.message)));
+  return root;
+}
+
+function paintVisionModelCard(root, cfg) {
+  let small = cfg.small_model || "demo";
+  let vlm = cfg.vlm_model || "";
+  const path = h("input", { class: "input mono", value: cfg.yolo_path || "", placeholder: "D:\\models\\helmet.pt 或留空使用 data/models/*.pt" });
+  const note = h("div", { class: "hint" }, "手动填写权重路径，或让已接入的大模型根据检测需求给出建议，确认后再保存。");
+  const ask = h("textarea", { class: "textarea", rows: 2, placeholder: "例如：用 YOLO 检测未戴安全帽，大模型用当前的视觉模型复核" });
+  const smallSel = h(
+    "select",
+    { class: "select", onchange: (e) => (small = e.target.value) },
+    ...(cfg.small_models || []).map((m) => h("option", { value: m.id, selected: m.id === small }, m.ready === false ? `${m.name}（未就绪）` : m.name)),
+  );
+  const vlmSel = h(
+    "select",
+    { class: "select", onchange: (e) => (vlm = e.target.value) },
+    h("option", { value: "", selected: !vlm }, "默认视觉模型"),
+    ...(cfg.vision_models || []).map((m) => h("option", { value: m.ref, selected: m.ref === vlm }, `${m.label}${m.vision ? "" : "（未标视觉）"}`)),
+  );
+  fill(
+    root,
+    h("div", { class: "section-title" }, icon("crosshair", 16), "视觉检测模型"),
+    h("p", { class: "muted", style: { marginTop: 0 } }, "小模型默认用场景演示，也可换成 YOLO。大模型从已接入的对话模型里选。这里的配置是监视墙的默认值。"),
+    h("div", { class: "row-2" }, field("小模型", smallSel), field("看图大模型", vlmSel)),
+    field("YOLO 权重路径", path, "手动指定 .pt 文件。也可把权重放到 data/models/，会自动出现在小模型列表。"),
+    field("让大模型协助配置", ask),
+    note,
+    h(
+      "div",
+      { class: "form-actions" },
+      h(
+        "button",
+        {
+          class: "btn",
+          type: "button",
+          onclick: async () => {
+            const text = ask.value.trim();
+            if (!text) {
+              toast("先写一下检测需求", "error");
+              return;
+            }
+            try {
+              const sug = await api("/api/vision/model-settings/assist", { method: "POST", body: { instruction: text } });
+              small = sug.small_model || small;
+              vlm = sug.vlm_model || "";
+              if (sug.yolo_path) path.value = sug.yolo_path;
+              smallSel.value = small;
+              vlmSel.value = vlm;
+              fill(note, sug.note || (sug.model_used ? "已根据大模型建议填好，确认后保存。" : "已按关键词填好，确认后保存。"));
+              toast("已填入建议，请确认后保存", "ok");
+            } catch (err) {
+              toast(err.message, "error");
+            }
+          },
+        },
+        "大模型协助",
+      ),
+      h(
+        "button",
+        {
+          class: "btn btn-primary",
+          type: "button",
+          onclick: async () => {
+            try {
+              const saved = await api("/api/vision/model-settings", {
+                method: "PUT",
+                body: { small_model: smallSel.value || "demo", yolo_path: path.value.trim(), vlm_model: vlmSel.value || "" },
+              });
+              toast("视觉模型已保存", "ok");
+              paintVisionModelCard(root, saved);
+            } catch (err) {
+              toast(err.message, "error");
+            }
+          },
+        },
+        "保存视觉模型",
       ),
     ),
   );

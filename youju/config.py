@@ -36,7 +36,7 @@ def load_settings() -> Settings:
     return Settings(
         data_dir=data_dir,
         database_url=os.getenv("YOUJU_DATABASE_URL") or f"sqlite:///{(data_dir / 'youju.db').as_posix()}",
-        max_upload_mb=int(os.getenv("YOUJU_MAX_UPLOAD_MB", "20")),
+        max_upload_mb=int(os.getenv("YOUJU_MAX_UPLOAD_MB", "500")),
         session_days=int(os.getenv("YOUJU_SESSION_DAYS", "7")),
         cookie_secure=_flag("YOUJU_COOKIE_SECURE", False),
         admin_password=os.getenv("YOUJU_ADMIN_PASSWORD") or None,
