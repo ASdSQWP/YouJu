@@ -82,6 +82,8 @@ def set_setting(db: Session, key: str, value) -> None:
 
 
 def models_of(row: Provider) -> list[ModelInfo]:
+    from youju.providers.adapt import guess_vision
+
     color = (PRESET_MAP.get(row.preset) or {}).get("color") or "#64748b"
     out = []
     for item in row.models or []:
@@ -99,7 +101,7 @@ def models_of(row: Provider) -> list[ModelInfo]:
                 kind=row.kind,
                 color=color,
                 tools=bool(item.get("tools", True)),
-                vision=bool(item.get("vision", False)),
+                vision=bool(item.get("vision", False)) or guess_vision(model_id),
                 extra={k: item[k] for k in ("format", "url") if item.get(k)},
             )
         )

@@ -31,6 +31,7 @@ class ScriptedLLM:
         tool_results = [m for m in body["messages"] if m["role"] == "tool"]
         if body.get("tools") and not tool_results and body.get("tool_choice") != "none":
             return sse_response(
+                {"choices": [{"index": 0, "delta": {"reasoning_content": "准备检索。"}}]},
                 {"choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{"index": 0, "id": "call_1", "type": "function", "function": {"name": "search_knowledge", "arguments": ""}}]}}]},
                 {"choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "function": {"arguments": '{"query": "CPU 使用率 排查步骤"}'}}]}, "finish_reason": "tool_calls"}]},
             )
@@ -40,7 +41,17 @@ class ScriptedLLM:
         return sse_response(
             {"choices": [{"index": 0, "delta": {"reasoning_content": "核对资料。"}}]},
             *[{"choices": [{"index": 0, "delta": {"content": answer[i : i + 6]}}]} for i in range(0, len(answer), 6)],
-            {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 120, "completion_tokens": 30}},
+            {
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                "usage": {
+                    "prompt_tokens": 120,
+                    "completion_tokens": 30,
+                    "prompt_tokens_details": {"cached_tokens": 24},
+                    "prompt_cache_hit_tokens": 24,
+                    "prompt_cache_miss_tokens": 96,
+                    "completion_tokens_details": {"reasoning_tokens": 8},
+                },
+            },
         )
 
 
@@ -79,14 +90,22 @@ def test_rag_mode_grounded_answer(client, agents, mock_provider):
     mock_provider(llm)
     _, events, final = ask(client, agents["hr"]["id"], "去上海出差住宿标准是多少？", model=None)
     assert final["mode"] == "rag" and final["model"]["model"] == "mock-chat"
-    assert final["reasoning"] == "核对资料。"
-    assert final["usage"] == {"input": 120, "output": 30, "estimated": False}
+    assert final["reasoning"] == ""
+    assert final["usage"] == {
+        "input": 120,
+        "output": 30,
+        "estimated": False,
+        "cache_hit": 24,
+        "cache_miss": 96,
+        "reasoning": 8,
+    }
     assert final["check"]["verdict"] == "pass", final["check"]
     assert len(final["used"]) == 1
     request = llm.requests[-1]
     assert "回答规则" in request["messages"][0]["content"] and "tools" not in request
     assert "参考资料" in request["messages"][-1]["content"]
-    assert any(e["type"] == "reasoning" for e in events)
+    assert request["max_tokens"] == 2_048
+    assert not any(e["type"] == "reasoning" for e in events)
 
 
 def test_agent_mode_calls_search_tool(client, agents, mock_provider):
@@ -100,7 +119,60 @@ def test_agent_mode_calls_search_tool(client, agents, mock_provider):
     assert final["check"]["verdict"] == "pass" and final["used"]
     assert llm.requests[0]["tools"][0]["function"]["name"] == "search_knowledge"
     assert llm.requests[1]["messages"][-1] == {"role": "tool", "tool_call_id": "call_1", "content": llm.requests[1]["messages"][-1]["content"]}
+    assert llm.requests[1]["messages"][-2]["reasoning_content"] == "准备检索。"
+    assert "tools" in llm.requests[1] and llm.requests[1]["max_tokens"] == 1_024
+    assert final["usage"]["cache_hit"] == 24 and final["usage"]["reasoning"] == 8
     assert [e["type"] for e in events].count("sources") >= 1
+    assert not any(e["type"] == "reasoning" for e in events)
+
+
+def test_agent_repeat_search_is_blocked_and_final_turn_has_no_tools(client, agents, mock_provider):
+    requests = []
+
+    def repeated_search(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        tool_results = [m for m in body["messages"] if m["role"] == "tool"]
+        if len(tool_results) < 2:
+            return sse_response(
+                {"choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "id": f"call_{len(tool_results) + 1}", "type": "function", "function": {"name": "search_knowledge", "arguments": '{"query": "CPU 使用率 排查步骤"}'}}]}, "finish_reason": "tool_calls"}]}
+            )
+        context = tool_results[0]["content"]
+        number, sentence = first_source(context)
+        answer = f"结论：{sentence.rstrip('。')}[{number}]。"
+        return sse_response(
+            *[{"choices": [{"index": 0, "delta": {"content": answer[i : i + 8]}}]} for i in range(0, len(answer), 8)],
+            {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+        )
+
+    mock_provider(repeated_search)
+    _, events, final = ask(client, agents["itops"]["id"], "CPU 使用率一直很高怎么排查？", model=None)
+    tools = [step for step in final["trace"] if step["kind"] == "tool"]
+    assert len(requests) == 3
+    assert [step["status"] for step in tools] == ["done", "error"]
+    assert "重复检索已拦截" in tools[1]["detail"]
+    assert "tools" in requests[-1] and requests[-1]["max_tokens"] == 1_024
+    assert final["content"] and final["check"]["verdict"] == "pass"
+    assert not any(event["type"] == "reasoning" for event in events)
+
+
+def test_agent_final_tool_call_returns_grounded_fallback(client, agents, mock_provider):
+    requests = []
+
+    def always_requests_search(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        query = "CPU 使用率 排查步骤"
+        return sse_response(
+            {"choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "id": f"call_{len(requests)}", "type": "function", "function": {"name": "search_knowledge", "arguments": json.dumps({"query": query}, ensure_ascii=False)}}]}, "finish_reason": "tool_calls"}]}
+        )
+
+    mock_provider(always_requests_search)
+    _, _, final = ask(client, agents["itops"]["id"], "CPU 使用率一直很高怎么排查？", model=None)
+    assert len(requests) == 4
+    assert "tools" in requests[0] and "tools" not in requests[-1]
+    assert any(step["status"] == "limit" for step in final["trace"] if step["kind"] == "think")
+    assert final["content"] and final["used"] and "CPU" in final["content"]
 
 
 def test_model_without_tools_uses_rag(client, agents, mock_provider):

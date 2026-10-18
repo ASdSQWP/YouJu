@@ -9,7 +9,7 @@ import { kbDetailView, kbListView } from "./views/kbs.js";
 import { eventsView } from "./views/events.js";
 import { dashboardView } from "./views/dashboard.js";
 import { settingsView } from "./views/settings.js";
-import { visionView } from "./views/vision.js";
+import { visionView } from "./views/vision.js?v=20261017a";
 
 const root = document.getElementById("app");
 

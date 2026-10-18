@@ -57,7 +57,36 @@ def message_public(msg) -> dict:
     }
 
 
-def event_public(ev, agent=None, brief: bool = False) -> dict:
+def _vision_event_data(payload: dict | None, alert=None) -> dict:
+    """看图告警补截图地址；纯文字告警不带图片。"""
+    root = dict(payload or {})
+    data = dict(root.get("data") or {}) if isinstance(root.get("data"), dict) else {}
+    visual = (getattr(alert, "detector", None) or data.get("detector") or "") in ("vlm", "small_then_vlm")
+    if alert is not None and visual:
+        data["alert_id"] = alert.id
+        data["snapshot_url"] = f"/api/vision/alerts/{alert.id}/snapshot"
+        if not data.get("evidence"):
+            evidence = list(getattr(alert, "evidence", None) or [])
+            if not evidence:
+                evidence = [
+                    {
+                        "id": item.get("id"),
+                        "name": item.get("name"),
+                        "reason": item.get("reason") or "",
+                        "confidence": item.get("confidence"),
+                    }
+                    for item in (alert.boxes or [])
+                    if isinstance(item, dict) and item.get("reason")
+                ]
+            if evidence:
+                data["evidence"] = evidence
+    elif not visual:
+        data.pop("snapshot_url", None)
+    root["data"] = data
+    return root
+
+
+def event_public(ev, agent=None, brief: bool = False, alert=None) -> dict:
     data = {
         "id": ev.id,
         "agent_id": ev.agent_id,
@@ -78,7 +107,7 @@ def event_public(ev, agent=None, brief: bool = False) -> dict:
     if not brief:
         data.update(
             {
-                "payload": ev.payload or {},
+                "payload": _vision_event_data(ev.payload, alert),
                 "report": ev.report,
                 "sources": ev.sources or [],
                 "trace": ev.trace or [],

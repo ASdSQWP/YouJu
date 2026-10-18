@@ -51,7 +51,16 @@ async def validation_error(_request: Request, exc: RequestValidationError):
     errors = exc.errors()
     first = errors[0] if errors else {}
     where = ".".join(str(p) for p in first.get("loc", []) if p not in ("body", "query", "path"))
-    return JSONResponse(status_code=422, content={"detail": f"参数不正确：{where} {first.get('msg', '')}".strip()})
+    msg = str(first.get("msg") or "")
+    if where == "instruction" and "at least 1" in msg:
+        detail = "请先填写检测要求，再点预览配置"
+    elif "at least 1 character" in msg:
+        detail = f"请填写{where or '内容'}"
+    elif msg == "Field required":
+        detail = f"缺少{where or '必填项'}"
+    else:
+        detail = f"参数不正确：{where} {msg}".strip()
+    return JSONResponse(status_code=422, content={"detail": detail})
 
 
 def os_theme() -> str:

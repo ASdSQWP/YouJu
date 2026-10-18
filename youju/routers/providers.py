@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from youju.db import get_db, iso
 from youju.deps import admin_user, current_user
 from youju.models import Agent, KnowledgeBase, Provider, User
-from youju.providers.adapt import adapt_if_needed, guess_model_type
+from youju.providers.adapt import adapt_if_needed, choose_probe_model, guess_model_type, guess_vision
 from youju.providers.base import ProviderError
 from youju.providers.presets import PRESET_MAP, PRESETS
 from youju.providers.registry import (
@@ -93,7 +93,7 @@ def _clean_models(items: list[ModelItem]) -> list[dict]:
         data: dict = {"id": key[0], "type": item.type}
         if item.type == "chat":
             data["tools"] = item.tools
-            data["vision"] = item.vision
+            data["vision"] = bool(item.vision) or guess_vision(key[0])
         if item.type == "rerank":
             data["format"] = item.format or "cohere"
             if item.url:
@@ -245,8 +245,15 @@ async def test_provider(
 ):
     row = _get(db, provider_id)
     infos = models_of(row)
-    info = next((m for m in infos if m.model == body.model), None) if body.model else None
-    info = info or next((m for m in infos if m.type == "chat"), None) or (infos[0] if infos else None)
+    if body.model:
+        info = next((m for m in infos if m.model == body.model), None)
+    else:
+        live = None
+        try:
+            live = await asyncio.wait_for(chat_provider(row).list_models(), timeout=12)
+        except (ProviderError, httpx.HTTPError, asyncio.TimeoutError, ValueError):
+            live = None
+        info = choose_probe_model(infos, live)
     if info is None:
         raise HTTPException(status_code=400, detail="这个服务还没有配置模型")
     started = time.perf_counter()

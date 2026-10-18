@@ -14,10 +14,14 @@ from sqlalchemy.orm import Session
 from youju.agent.runner import AgentSnapshot, RunInput, collect
 from youju.db import SessionLocal, get_db, utcnow
 from youju.deps import can_edit, can_read, current_user, get_agent, visible
-from youju.models import Agent, Conversation, Event, Message, User
+from youju.models import Agent, Conversation, DetectionAlert, Event, Message, User
 from youju.routers.chat import short_title
 from youju.seed import load_samples
 from youju.serial import event_public
+
+
+def _alert_for_event(db: Session, event_id: int) -> DetectionAlert | None:
+    return db.scalar(select(DetectionAlert).where(DetectionAlert.event_id == event_id).order_by(DetectionAlert.id.desc()))
 
 log = logging.getLogger("youju.events")
 
@@ -183,7 +187,7 @@ def _event(db: Session, event_id: int, user: User) -> tuple[Event, Agent]:
 @router.get("/api/events/{event_id}")
 def get_event(event_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     ev, agent = _event(db, event_id, user)
-    return event_public(ev, agent)
+    return event_public(ev, agent, alert=_alert_for_event(db, ev.id))
 
 
 @router.post("/api/events/{event_id}/review")
@@ -196,7 +200,7 @@ def review(event_id: int, body: ReviewBody, user: User = Depends(current_user), 
     ev.reviewer_id = user.id
     ev.reviewed_at = utcnow()
     db.commit()
-    return event_public(ev, agent)
+    return event_public(ev, agent, alert=_alert_for_event(db, ev.id))
 
 
 @router.post("/api/events/{event_id}/conversation")

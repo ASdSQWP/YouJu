@@ -15,7 +15,12 @@ def test_compose_natural_language_rule():
     assert draft["detector"] == "small"
 
 
-def test_compose_postprocess_detector():
+def test_compose_vision_words_use_vlm():
+    draft = parse_instruction("看图检测未戴安全帽，把截图推送告警", [], [])
+    assert draft["detector"] == "vlm"
+    assert draft["algorithms"] == ["no_helmet"]
+    text_only = parse_instruction("仅小模型检测未戴安全帽，不看图", [], [])
+    assert text_only["detector"] == "small"
     draft = parse_instruction("检测烟火，用小模型加大模型后处理", [], [])
     assert draft["detector"] == "small_then_vlm"
     assert "fire_smoke" in draft["algorithms"]

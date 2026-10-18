@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -33,7 +34,9 @@ from youju.textproc import estimate_tokens
 
 log = logging.getLogger("youju.agent")
 
-MAX_TOOL_ROUNDS = 4
+MAX_TOOL_ROUNDS = 3
+MAX_TOOL_PLANNING_TOKENS = 1_024
+MAX_FINAL_OUTPUT_TOKENS = 2_048
 REFUSAL = (
     "资料库中没有找到与这个问题直接相关的依据。为避免误导，这个问题暂不作答。\n\n"
     "可以换个说法、补充更具体的关键词，或联系管理员补充资料。"
@@ -97,7 +100,6 @@ class Run:
         self.usage = {"input": 0, "output": 0, "estimated": False}
         self.started = time.perf_counter()
         self.text = ""
-        self.reasoning = ""
         self.refused = False
         self.error: str | None = None
         self.turn_text = ""
@@ -127,7 +129,15 @@ class Run:
 
     def usage_text(self) -> str:
         tail = "（估算）" if self.usage["estimated"] else ""
-        return f"输入 {self.usage['input']} · 输出 {self.usage['output']} tokens{tail}"
+        detail = []
+        if self.usage.get("cache_hit") is not None:
+            detail.append(f"缓存命中 {self.usage['cache_hit']} tokens")
+        if self.usage.get("cache_miss") is not None:
+            detail.append(f"缓存未命中 {self.usage['cache_miss']} tokens")
+        if self.usage.get("reasoning") is not None:
+            detail.append(f"推理 {self.usage['reasoning']} tokens")
+        suffix = f" · {' / '.join(detail)}" if detail else ""
+        return f"输入 {self.usage['input']} · 输出 {self.usage['output']} tokens{tail}{suffix}"
 
 
 def _mode(provider, info: ModelInfo, agent: AgentSnapshot, kbs: list) -> str:
@@ -180,11 +190,32 @@ async def _type_out(r: Run, text: str, size: int = 8) -> AsyncIterator[dict]:
         await asyncio.sleep(0.006)
 
 
-async def _turn(r: Run, provider, messages: list[dict], tools=None, tool_choice: str | None = None) -> AsyncIterator[dict]:
+def _tool_args_preview(call) -> dict:
+    args = call.arguments if isinstance(call.arguments, dict) else {}
+    try:
+        raw = call.raw_arguments if isinstance(call.raw_arguments, str) and call.raw_arguments else json.dumps(args, ensure_ascii=False)
+    except (TypeError, ValueError):
+        raw = repr(args)
+    return args if len(raw) <= 1_200 else {"_preview": raw[:1_200] + "…"}
+
+
+async def _turn(
+    r: Run,
+    provider,
+    messages: list[dict],
+    tools=None,
+    tool_choice: str | None = None,
+    max_tokens: int | None = None,
+) -> AsyncIterator[dict]:
     r.turn_text, r.turn_reasoning, r.turn_calls, r.turn_raw = "", "", [], None
     usage = None
     stream = provider.stream(
-        r.info.model, messages, tools=tools, temperature=r.inp.agent.temperature, tool_choice=tool_choice
+        r.info.model,
+        messages,
+        tools=tools,
+        temperature=r.inp.agent.temperature,
+        tool_choice=tool_choice,
+        max_tokens=max_tokens,
     )
     async with aclosing(stream) as parts:
         async for part in parts:
@@ -193,8 +224,6 @@ async def _turn(r: Run, provider, messages: list[dict], tools=None, tool_choice:
                 yield {"type": "delta", "delta": part.text}
             elif part.kind == "reasoning":
                 r.turn_reasoning += part.text
-                r.reasoning += part.text
-                yield {"type": "reasoning", "delta": part.text}
             elif part.kind == "tool_calls":
                 r.turn_calls = list(part.calls)
                 if part.raw is not None:
@@ -204,8 +233,9 @@ async def _turn(r: Run, provider, messages: list[dict], tools=None, tool_choice:
             elif part.kind == "end" and part.raw is not None:
                 r.turn_raw = part.raw
     if usage:
-        r.usage["input"] += int(usage.get("input") or 0)
-        r.usage["output"] += int(usage.get("output") or 0)
+        for key, value in usage.items():
+            if key in {"input", "output"} or isinstance(value, (int, float)):
+                r.usage[key] = int(r.usage.get(key) or 0) + int(value or 0)
     else:
         r.usage["input"] += estimate_tokens("".join(str(m.get("content") or "") for m in messages))
         r.usage["output"] += estimate_tokens(r.turn_text + r.turn_reasoning)
@@ -258,7 +288,7 @@ async def _pipeline(r: Run, provider, kbs: list[tuple[int, str]]) -> AsyncIterat
     step = r.start("generate", f"生成回答 · {r.info.model}")
     yield r.event(step)
     try:
-        async for ev in _turn(r, provider, messages):
+        async for ev in _turn(r, provider, messages, max_tokens=MAX_FINAL_OUTPUT_TOKENS):
             yield ev
     except ProviderError as exc:
         yield r.event(r.end(step, status="error", detail=str(exc)))
@@ -323,12 +353,21 @@ async def _agent(r: Run, provider, kbs: list[tuple[int, str]]) -> AsyncIterator[
         *prompts.history(inp.history),
         {"role": "user", "content": question},
     ]
+    needs_replace = False
     for round_no in range(MAX_TOOL_ROUNDS + 1):
-        last = round_no == MAX_TOOL_ROUNDS
-        step = r.start("think", "整理最终回答" if last else f"模型规划 · 第 {round_no + 1} 轮")
+        # Once a toolbox budget is exhausted, skip any further planning calls and
+        # use the next model turn only to produce the final answer.
+        last = round_no == MAX_TOOL_ROUNDS or toolbox.must_finalize
+        step = r.start("think", "整理最终回答" if last else f"判断下一步 · 第 {round_no + 1} 轮")
         yield r.event(step)
         try:
-            async for ev in _turn(r, provider, messages, specs, "none" if last else None):
+            async for ev in _turn(
+                r,
+                provider,
+                messages,
+                tools=None if last else specs,
+                max_tokens=MAX_FINAL_OUTPUT_TOKENS if last else MAX_TOOL_PLANNING_TOKENS,
+            ):
                 yield ev
         except ProviderError as exc:
             yield r.event(r.end(step, status="error", detail=str(exc)))
@@ -344,7 +383,23 @@ async def _agent(r: Run, provider, kbs: list[tuple[int, str]]) -> AsyncIterator[
             async for ev in _fallback(r, kbs, exc):
                 yield ev
             return
-        if r.turn_calls and not last:
+        if r.turn_calls and last:
+            if r.turn_text.strip():
+                yield {"type": "interim_reset"}
+            if len(r.book):
+                r.text = extractive_event(inp.event, r.book) if inp.event else extractive_answer(inp.question, r.book)
+            else:
+                r.text = "工具调用轮数已达到上限，当前没有可引用的检索资料。"
+            needs_replace = True
+            yield r.event(
+                r.end(
+                    step,
+                    status="limit",
+                    detail="最终回答阶段仍请求工具；未执行额外工具，改用已收集资料整理答复",
+                )
+            )
+            break
+        if r.turn_calls:
             said = r.turn_text.strip()
             if said:
                 yield {"type": "interim_reset"}
@@ -360,7 +415,13 @@ async def _agent(r: Run, provider, kbs: list[tuple[int, str]]) -> AsyncIterator[
             )
             before = len(r.book)
             for call in r.turn_calls:
-                tool_step = r.start("tool", TOOL_TITLES.get(call.name, call.name), tool=call.name, arguments=call.arguments)
+                tool_name = call.name if isinstance(call.name, str) else str(call.name)[:80]
+                tool_step = r.start(
+                    "tool",
+                    TOOL_TITLES.get(tool_name, tool_name),
+                    tool=tool_name[:80],
+                    arguments=_tool_args_preview(call),
+                )
                 yield r.event(tool_step)
                 text, meta = await toolbox.run(call)
                 yield r.event(
@@ -377,6 +438,12 @@ async def _agent(r: Run, provider, kbs: list[tuple[int, str]]) -> AsyncIterator[
                 yield {"type": "sources", "sources": r.book.items}
             continue
         r.text = r.turn_text
+        if not r.text.strip():
+            if len(r.book):
+                r.text = extractive_event(inp.event, r.book) if inp.event else extractive_answer(inp.question, r.book)
+            else:
+                r.text = "模型没有返回回答内容。请稍后重试，或联系管理员检查模型服务。"
+            needs_replace = True
         yield r.event(r.end(step, detail=r.usage_text()))
         break
     if agent.strict and not toolbox.evidence and not prompts.is_config_request(inp.question or ""):
@@ -384,6 +451,8 @@ async def _agent(r: Run, provider, kbs: list[tuple[int, str]]) -> AsyncIterator[
         r.text = EVENT_REFUSAL if inp.event else REFUSAL
         guard = r.start("guard", "没有检索到足够依据，已替换为拒答")
         yield r.event(r.end(guard))
+        yield {"type": "replace", "content": r.text}
+    elif needs_replace:
         yield {"type": "replace", "content": r.text}
 
 
@@ -398,7 +467,7 @@ def _final(r: Run) -> dict:
     return {
         "type": "final",
         "content": content,
-        "reasoning": r.reasoning,
+        "reasoning": "",
         "sources": r.book.items,
         "used": used_numbers(content),
         "check": check,

@@ -93,8 +93,11 @@ class OpenAICompatProvider:
         tools: list[ToolSpec] | None = None,
         temperature: float | None = None,
         tool_choice: str | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[StreamPart]:
         body: dict = {"model": model, "messages": self.wire_messages(messages), "stream": True}
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
         if tools:
             body["tools"] = [
                 {
@@ -119,8 +122,26 @@ class OpenAICompatProvider:
                             raw = await resp.aread()
                             if attempt < 2 and resp.status_code == 400 and _drop_rejected(body, raw):
                                 continue
+                            if _is_ark(self.base_url) and _ark_access_denied(raw):
+                                if "/api/plan" in self.base_url:
+                                    raise ProviderError(
+                                        f"Agent Plan 不能调用「{model}」。请改成套餐支持的模型名，例如 ark-code-latest。",
+                                        status=resp.status_code,
+                                    )
+                                raise ProviderError(
+                                    f"火山方舟没有开通「{model}」的调用权限。模型广场里的名字不能直接用来对话，"
+                                    "已下线的版本也会出现在目录中。请到方舟控制台「在线推理」创建接入点，"
+                                    "把 ep- 开头的接入点 ID 填到模型名称后再测试。",
+                                    status=resp.status_code,
+                                )
                             if resp.status_code in (404, 400) and _looks_missing_model(raw, model):
                                 raise await self._missing_model(model, resp.status_code, raw)
+                            if resp.status_code == 403 and _ollama_cloud_disabled(raw):
+                                raise ProviderError(
+                                    f"「{model}」是 Ollama 云端模型，本机未开启 Ollama Cloud，无法调用。"
+                                    "请改用已下载到本机的模型（名称里不带 cloud）。",
+                                    status=403,
+                                )
                             if resp.status_code == 502 and _is_loopback(self.base_url):
                                 raise ProviderError(
                                     f"访问 {self.base_url} 返回 502，通常是系统代理劫持了本机地址。"
@@ -162,10 +183,22 @@ class OpenAICompatProvider:
         except httpx.ProxyError as exc:
             raise ProviderError(f"系统代理拦截了 {self.base_url}。") from exc
         if resp.status_code >= 400:
+            if resp.status_code == 404 and "/api/plan" in self.base_url:
+                raise ProviderError(
+                    "Agent Plan 不提供模型列表。请直接填写套餐里的模型名，例如 ark-code-latest。",
+                    status=404,
+                )
             raise error_from_response(resp.status_code, resp.content)
         data = resp.json()
         items = data.get("data") if isinstance(data, dict) else data
-        return sorted({str(item["id"]) for item in items or [] if isinstance(item, dict) and item.get("id")})
+        names = []
+        for item in items or []:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            if _retired_status(item.get("status")):
+                continue
+            names.append(str(item["id"]))
+        return sorted(set(names))
 
     async def _missing_model(self, model: str, status: int, raw: bytes) -> ProviderError:
         installed = []
@@ -176,9 +209,11 @@ class OpenAICompatProvider:
         if installed:
             shown = "、".join(installed[:8])
             extra = f" 等 {len(installed)} 个" if len(installed) > 8 else ""
+            hint = "请打开「设置 → 模型服务」，点「从接口获取」勾选实际可用的模型名。"
+            if "volces.com" in self.base_url or "volcengine.com" in self.base_url:
+                hint += "火山方舟需使用账号里已开通的模型，或填写推理接入点 ID（ep- 开头）。"
             return ProviderError(
-                f"Ollama 里没有「{model}」。当前已安装：{shown}{extra}。"
-                "请打开「设置 → 模型服务」，点「从接口获取」勾选实际模型名。",
+                f"{_service_label(self.base_url)}里没有「{model}」。当前可用：{shown}{extra}。{hint}",
                 status=status,
             )
         return error_from_response(status, raw)
@@ -187,6 +222,44 @@ class OpenAICompatProvider:
 def _is_loopback(url: str) -> bool:
     host = (url or "").lower()
     return any(token in host for token in ("127.0.0.1", "localhost", "[::1]", "0.0.0.0"))
+
+
+def _service_label(url: str) -> str:
+    host = (url or "").lower()
+    if _is_loopback(host) and "11434" in host:
+        return "Ollama "
+    if _is_loopback(host):
+        return "本地模型服务"
+    if "deepseek.com" in host:
+        return "DeepSeek "
+    if "volces.com" in host or "volcengine.com" in host:
+        return "火山方舟 "
+    if "dashscope" in host:
+        return "通义千问 "
+    if "bigmodel.cn" in host:
+        return "智谱 "
+    if "moonshot.cn" in host:
+        return "Kimi "
+    return "该模型服务"
+
+
+def _is_ark(url: str) -> bool:
+    host = (url or "").lower()
+    return "volces.com" in host or "volcengine.com" in host
+
+
+def _ark_access_denied(raw: bytes) -> bool:
+    text = raw.decode("utf-8", "replace").lower()
+    return "invalidendpointormodel" in text or "do not have access" in text
+
+
+def _retired_status(status) -> bool:
+    return str(status or "").strip().lower() in {"shutdown", "disabled", "offline", "retiring"}
+
+
+def _ollama_cloud_disabled(raw: bytes) -> bool:
+    text = raw.decode("utf-8", "replace").lower()
+    return "cloud is disabled" in text or "remote model is unavailable" in text
 
 
 def _looks_missing_model(raw: bytes, model: str) -> bool:
@@ -206,10 +279,23 @@ def _drop_rejected(body: dict, raw: bytes) -> bool:
 
 
 def _usage(raw: dict) -> dict:
-    return {
+    usage = {
         "input": int(raw.get("prompt_tokens") or raw.get("input_tokens") or 0),
         "output": int(raw.get("completion_tokens") or raw.get("output_tokens") or 0),
     }
+    prompt_details = raw.get("prompt_tokens_details") or {}
+    completion_details = raw.get("completion_tokens_details") or {}
+    if not isinstance(prompt_details, dict):
+        prompt_details = {}
+    if not isinstance(completion_details, dict):
+        completion_details = {}
+    if "prompt_cache_hit_tokens" in raw or "cached_tokens" in prompt_details:
+        usage["cache_hit"] = int(raw.get("prompt_cache_hit_tokens") or prompt_details.get("cached_tokens") or 0)
+    if "prompt_cache_miss_tokens" in raw:
+        usage["cache_miss"] = int(raw.get("prompt_cache_miss_tokens") or 0)
+    if "reasoning_tokens" in completion_details:
+        usage["reasoning"] = int(completion_details.get("reasoning_tokens") or 0)
+    return usage
 
 
 async def _from_stream(resp) -> AsyncIterator[StreamPart]:

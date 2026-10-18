@@ -219,7 +219,7 @@ function paintVisionModelCard(root, cfg) {
     "select",
     { class: "select", onchange: (e) => (vlm = e.target.value) },
     h("option", { value: "", selected: !vlm }, "默认视觉模型"),
-    ...(cfg.vision_models || []).map((m) => h("option", { value: m.ref, selected: m.ref === vlm }, `${m.label}${m.vision ? "" : "（未标视觉）"}`)),
+    ...(cfg.vision_models || []).map((m) => h("option", { value: m.ref, selected: m.ref === vlm }, `${m.label}${m.vision ? "" : "（未勾选视觉）"}`)),
   );
   fill(
     root,
@@ -324,11 +324,18 @@ function providerModal(preset, existing, reload) {
           { class: "model-row" },
           h("input", { class: "input input-sm mono", value: m.id, placeholder: "模型名称", oninput: (e) => (m.id = e.target.value) }),
           type,
-          m.type === "chat" ? h("label", { class: "mini-check", title: "模型支持 Function Calling 时可用于工具调用模式" }, h("input", { type: "checkbox", checked: m.tools !== false, onchange: (e) => (m.tools = e.target.checked) }), "工具调用") : h("span", { class: "mini-check muted" }, m.type === "rerank" ? m.format || "cohere" : ""),
+          m.type === "chat"
+            ? h(
+                "span",
+                { class: "model-flags" },
+                h("label", { class: "mini-check", title: "模型支持 Function Calling 时可用于工具调用模式" }, h("input", { type: "checkbox", checked: m.tools !== false, onchange: (e) => (m.tools = e.target.checked) }), "工具调用"),
+                h("label", { class: "mini-check", title: "支持图片输入时勾选，视觉检测会优先选用" }, h("input", { type: "checkbox", checked: !!m.vision, onchange: (e) => (m.vision = e.target.checked) }), "视觉"),
+              )
+            : h("span", { class: "mini-check muted" }, m.type === "rerank" ? m.format || "cohere" : ""),
           h("button", { class: "icon-btn", type: "button", title: "移除", onclick: () => (models.splice(i, 1), drawRows()) }, icon("x", 14)),
         );
       }),
-      h("button", { class: "btn btn-sm btn-ghost", type: "button", onclick: () => (models.push({ id: "", type: "chat", tools: true }), drawRows()) }, icon("plus", 14), "添加模型"),
+      h("button", { class: "btn btn-sm btn-ghost", type: "button", onclick: () => (models.push({ id: "", type: "chat", tools: true, vision: false }), drawRows()) }, icon("plus", 14), "添加模型"),
     );
   };
   drawRows();

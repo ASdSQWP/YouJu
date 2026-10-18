@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
@@ -127,9 +127,14 @@ class RulePatch(BaseModel):
 
 
 class ComposeBody(BaseModel):
-    instruction: str = Field(min_length=1, max_length=2000)
+    """保留给测试和文档。接口本身按原始 JSON 读取，避免空文本直接 422。"""
+
+    instruction: str = ""
     apply: bool = False
     use_model: bool = True
+
+
+_COMPOSE_EXAMPLE = "给杆塔3拉流，检测未系安全带和挂钩，置信度 0.6 以上告警，推给安全巡检助手"
 
 
 def _ensure_seed(db: Session, user: User) -> None:
@@ -413,6 +418,26 @@ def upsert_session_rule(
     if not algorithms:
         raise HTTPException(status_code=400, detail="至少选择一个检测算法")
     detector = body.detector if body.detector in DETECTOR_IDS else "small"
+    vlm_model = (body.vlm_model or "").strip()
+    if detector in ("vlm", "small_then_vlm"):
+        from youju.providers.registry import find_model
+        from youju.vision.vlm import resolve_vision
+
+        if vlm_model:
+            _row, chosen = find_model(db, vlm_model)
+            if chosen is not None and not chosen.vision:
+                raise HTTPException(
+                    status_code=400,
+                    detail="看图检测需要带视觉能力的模型。没有视觉能力的模型只会推送文字，不能用来判断画面。",
+                )
+        else:
+            _provider, info, sees = resolve_vision(db, None)
+            if not sees or info is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="看图检测需要带视觉能力的模型。请先在设置里接入，例如 ark-code-latest。",
+                )
+            vlm_model = info.ref
     if body.agent_id:
         get_agent(db, body.agent_id, user)
     rule = db.scalar(
@@ -443,7 +468,7 @@ def upsert_session_rule(
             level="medium",
             detector=detector,
             small_model=(body.small_model or "demo")[:80],
-            vlm_model=(body.vlm_model or "")[:160],
+            vlm_model=vlm_model[:160],
             agent_id=body.agent_id,
             enabled=True,
             auto_push=body.auto_push,
@@ -454,7 +479,7 @@ def upsert_session_rule(
         rule.algorithms = algorithms
         rule.detector = detector
         rule.small_model = (body.small_model or "demo")[:80]
-        rule.vlm_model = (body.vlm_model or "")[:160]
+        rule.vlm_model = vlm_model[:160]
         rule.confidence = body.confidence
         if body.agent_id is not None:
             rule.agent_id = body.agent_id
@@ -708,6 +733,15 @@ def _save_rule(db: Session, user: User, data: dict[str, Any]) -> DetectionRule:
     detector = data.get("detector") or "small"
     if detector not in DETECTOR_IDS:
         detector = "small"
+    vlm_model = (data.get("vlm_model") or "").strip()
+    if detector in ("vlm", "small_then_vlm") and vlm_model:
+        from youju.providers.registry import find_model
+
+        _row, chosen = find_model(db, vlm_model)
+        if chosen is not None and not chosen.vision:
+            raise HTTPException(status_code=400, detail="这个模型没有视觉能力，不能用于看图检测。请改用视觉模型，或改成仅小模型以只推送文字。")
+        if chosen is not None:
+            vlm_model = chosen.ref
     agent_id = data.get("agent_id")
     if agent_id:
         get_agent(db, agent_id, user)
@@ -726,7 +760,7 @@ def _save_rule(db: Session, user: User, data: dict[str, Any]) -> DetectionRule:
         level=data.get("level") or "medium",
         detector=detector,
         small_model=(data.get("small_model") or "demo")[:80],
-        vlm_model=(data.get("vlm_model") or "")[:160],
+        vlm_model=vlm_model[:160],
         agent_id=agent_id,
         enabled=bool(data.get("enabled", True)),
         auto_push=bool(data.get("auto_push", True)),
@@ -782,7 +816,18 @@ async def _enrich_draft_with_model(db: Session, draft: dict, instruction: str) -
 
 
 @router.post("/api/vision/rules/compose")
-async def compose_rule(body: ComposeBody, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def compose_rule(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    raw: dict = {}
+    try:
+        parsed = await request.json()
+        if isinstance(parsed, dict):
+            raw = parsed
+    except Exception:
+        raw = {}
+    instruction = str(raw.get("instruction") or "").strip() or _COMPOSE_EXAMPLE
+    apply = bool(raw.get("apply"))
+    use_model = True if "use_model" not in raw else bool(raw.get("use_model"))
+    body = ComposeBody(instruction=instruction[:8000], apply=apply, use_model=use_model)
     _ensure_seed(db, user)
     sources = [
         {"id": s.id, "name": s.name, "code": s.code}
@@ -854,14 +899,21 @@ def list_alerts(source_id: int | None = None, user: User = Depends(current_user)
 
 @router.get("/api/vision/alerts/{alert_id}/snapshot")
 def alert_snapshot(alert_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    from youju.vision.frames import capture_jpeg, source_media_path
+
     alert = db.get(DetectionAlert, alert_id)
     source = db.get(VisionSource, alert.source_id) if alert else None
     if alert is None or source is None or not _can_view_source(source, user):
         raise HTTPException(status_code=404, detail="告警不存在")
     path = Path(alert.snapshot_path or "")
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="告警没有对应截图")
-    return Response(path.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+    if path.is_file():
+        return Response(path.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+    # 旧告警可能没落盘截图：回退到源图片/视频抽帧，事件中心仍能看到画面
+    media = source_media_path(source)
+    jpeg = capture_jpeg(media, tick=int(alert.tick or 0)) if media else None
+    if jpeg:
+        return Response(jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+    raise HTTPException(status_code=404, detail="告警没有对应截图")
 
 
 @router.post("/api/vision/alerts/{alert_id}/close")

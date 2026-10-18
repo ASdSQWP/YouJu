@@ -22,28 +22,28 @@ _JSON_BLOCK = re.compile(r"\{[\s\S]*\}")
 
 
 def resolve_vision(db, model_ref: str | None = None):
-    """优先用规则指定的模型，否则找带 vision 标记的对话模型，再退回任意非本地对话模型。"""
-    preferred = (model_ref or "").strip() or get_setting(db, "default_chat_model")
+    """只解析能看图的模型。没有视觉能力的对话模型不拿来做画面检测。"""
+    preferred = (model_ref or "").strip()
+    if not preferred:
+        preferred = (get_setting(db, "vision_vlm_model") or "").strip()
     if preferred and preferred != LOCAL_CHAT:
         row, info = find_model(db, preferred)
         if row is not None and info is not None and info.type == "chat":
             return chat_provider(row), info, bool(getattr(info, "vision", False))
-    vision_first = [i for i in list_models(db, "chat") if not i.local and getattr(i, "vision", False)]
-    others = [i for i in list_models(db, "chat") if not i.local and i not in vision_first]
-    for info in vision_first + others:
+    for info in list_models(db, "chat"):
+        if info.local or not getattr(info, "vision", False):
+            continue
         row, found = find_model(db, info.ref)
         if row is not None and found is not None:
-            return chat_provider(row), found, bool(getattr(found, "vision", False))
+            return chat_provider(row), found, True
     return None, None, False
 
 
 def vision_ready(db, model_ref: str | None = None) -> tuple[bool, str]:
     provider, info, is_vision = resolve_vision(db, model_ref)
-    if provider is None or info is None:
-        return False, "尚未配置可用于看图的大模型。请到「设置 → 模型服务」接入支持视觉的模型（如 Qwen-VL、GPT-4o）。"
-    if not is_vision:
-        return True, f"已接入 {info.label}，但未标记为视觉模型；将尝试送图分析，若接口不支持请换 VL 模型。"
-    return True, f"已接入视觉模型 {info.label}，告警将基于真实画面分析。"
+    if provider is None or info is None or not is_vision:
+        return False, "还没有可看图的模型。请在设置里接入视觉模型（如 ark-code-latest、Qwen-VL）。没有视觉能力的模型只会推送文字。"
+    return True, f"已接入视觉模型 {info.label}，告警会附带画面截图。"
 
 
 def _user_content(jpeg: bytes, prompt: str) -> list[dict]:
@@ -166,9 +166,9 @@ def analyze_image(
     model_ref: str | None = None,
 ) -> tuple[list[dict], str | None]:
     """看图分析。返回 (hits, error_hint)。没有可见依据时 hits 为空。"""
-    provider, info, _is_vision = resolve_vision(db, model_ref)
-    if provider is None or info is None:
-        return [], "未配置大模型，无法分析画面"
+    provider, info, is_vision = resolve_vision(db, model_ref)
+    if provider is None or info is None or not is_vision:
+        return [], "所选模型没有视觉能力，不会根据画面告警，也不会推送截图。"
     if not isinstance(provider, OpenAICompatProvider):
         return [], f"当前协议 {getattr(provider, 'kind', type(provider))} 暂不支持送图，请改用 OpenAI 兼容的视觉模型"
     prompt = _prompt(algorithms, instruction)

@@ -5,8 +5,17 @@ from sqlalchemy.orm import Session, sessionmaker
 from youju.db import Base
 from youju.models import Agent, Provider, User
 from youju.providers import http as provider_http
-from youju.providers.adapt import adapt_if_needed, adapt_local_models, pick_chat_model, score_chat_model
+from youju.providers.adapt import adapt_if_needed, adapt_local_models, choose_probe_model, guess_vision, pick_chat_model, score_chat_model
+from youju.providers.registry import ModelInfo
 from youju.providers.registry import LOCAL_CHAT, get_setting, set_setting
+
+
+def test_guess_vision_covers_agent_plan_multimodal():
+    assert guess_vision("ark-code-latest")
+    assert guess_vision("doubao-seed-2.1-pro")
+    assert guess_vision("qwen3-vl:30b")
+    assert not guess_vision("deepseek-chat")
+    assert not guess_vision("qwen3.5:9b")
 
 
 def test_pick_chat_prefers_local_midsize_over_cloud():
@@ -14,6 +23,28 @@ def test_pick_chat_prefers_local_midsize_over_cloud():
     assert pick_chat_model(names) in {"llama3.1:8b", "qwen3.5:9b"}
     assert pick_chat_model(names, preferred="llama3.1:8b") == "llama3.1:8b"
     assert score_chat_model("huihui_ai/qwen3-abliterated:8b") > score_chat_model("qwen3-vl:235b-cloud")
+
+
+def _info(model: str, kind: str = "chat") -> ModelInfo:
+    return ModelInfo(f"1:{model}", model, kind, 1, "服务", "ollama", "openai", "#000")
+
+
+def test_choose_probe_skips_cloud_and_unopened_preset():
+    local = choose_probe_model(
+        [_info("deepseek-v3.1:671b-cloud"), _info("glm-4.6:cloud"), _info("qwen3.5:9b"), _info("bge-m3", "embedding")],
+        ["deepseek-v3.1:671b-cloud", "glm-4.6:cloud", "qwen3.5:9b", "bge-m3"],
+    )
+    assert local.model == "qwen3.5:9b"
+    ark = choose_probe_model(
+        [_info("doubao-seed-1-6-250615"), _info("deepseek-r1-250120")],
+        ["deepseek-r1-250120", "deepseek-r1-250528"],
+    )
+    assert ark.model == "deepseek-r1-250120"
+    endpoint = choose_probe_model(
+        [_info("deepseek-r1-250120"), _info("ep-202610170001")],
+        ["deepseek-r1-250120"],
+    )
+    assert endpoint.model == "ep-202610170001"
 
 
 def _session() -> Session:

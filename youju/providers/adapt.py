@@ -41,12 +41,31 @@ def guess_model_type(name: str) -> str:
     return "chat"
 
 
+def guess_vision(name: str) -> bool:
+    """按模型名推断是否支持看图。标记只影响界面提示和默认优先顺序，未标记也会尝试送图。"""
+    lower = (name or "").lower().replace("_", "-")
+    if any(token in lower for token in ("vl", "vision", "seedream", "gpt-4o", "gpt-5", "claude", "gemini")):
+        return True
+    # Agent Plan / 豆包等原生多模态，名称里不一定带 vl
+    known = (
+        "ark-code-latest",
+        "doubao-seed-2.1-pro",
+        "doubao-seed-2.1-lite",
+        "doubao-seed-2.1-turbo",
+        "doubao-seed-evolving",
+        "kimi-k3",
+        "deepseek-v4.1-flash",
+        "glm-5.3-flash",
+    )
+    return any(token in lower for token in known)
+
+
 def model_entry(name: str) -> dict:
     kind = guess_model_type(name)
     data: dict = {"id": name, "type": kind}
     if kind == "chat":
         data["tools"] = True
-        data["vision"] = "vl" in name.lower() or "vision" in name.lower()
+        data["vision"] = guess_vision(name)
     return data
 
 
@@ -100,6 +119,39 @@ def pick_chat_model(names: list[str], preferred: str | None = None) -> str | Non
     if not chats:
         return None
     return sorted(chats, key=lambda name: (-score_chat_model(name), name))[0]
+
+
+def choose_probe_model(infos: list, live_names: list[str] | None = None):
+    """连接测试优先打真正能调用的对话模型。
+
+    配置列表常常按名字排序，云端模型和未开通的预设名会排在前面。
+    如果接口返回了可用模型，只在交集里挑选，并避开名称里带 cloud 的条目。
+    """
+    if not infos:
+        return None
+
+    def model_id(item) -> str:
+        return item.model if hasattr(item, "model") else str(item.get("id") or "")
+
+    def model_type(item) -> str:
+        return item.type if hasattr(item, "type") else str(item.get("type") or "chat")
+
+    chats = [item for item in infos if model_type(item) == "chat"]
+    pool = chats or list(infos)
+    endpoints = [item for item in pool if model_id(item).startswith("ep-")]
+    if endpoints:
+        return endpoints[0]
+    if live_names:
+        live = set(live_names)
+        matched = [item for item in pool if model_id(item) in live]
+        if matched:
+            pool = matched
+    if model_type(pool[0]) == "chat":
+        chosen = pick_chat_model([model_id(item) for item in pool])
+        for item in pool:
+            if model_id(item) == chosen:
+                return item
+    return pool[0]
 
 
 def is_local_provider(row: Provider) -> bool:

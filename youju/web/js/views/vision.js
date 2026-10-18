@@ -958,7 +958,7 @@ export function visionView({ params, path }) {
           },
         },
         h("option", { value: "", selected: !vlmModel }, "默认视觉模型"),
-        ...visions.map((m) => h("option", { value: m.ref, selected: m.ref === vlmModel }, `${m.label}${m.vision ? "" : "（未标视觉）"}`)),
+        ...visions.map((m) => h("option", { value: m.ref, selected: m.ref === vlmModel }, `${m.label}${m.vision ? "" : "（未勾选视觉）"}`)),
       );
       fill(
         modelPick,
@@ -1368,7 +1368,8 @@ export function visionView({ params, path }) {
   }
 
   function composeBox() {
-    const area = h("textarea", { class: "textarea", rows: 3, placeholder: "例如：给杆塔3拉流，检测未系安全带和挂钩，置信度 0.6 以上告警，推给安全巡检助手" });
+    const EXAMPLE = "给杆塔3拉流，检测未系安全带和挂钩，置信度 0.6 以上告警，推给安全巡检助手";
+    const area = h("textarea", { class: "textarea", rows: 3, placeholder: `例如：${EXAMPLE}` });
     const hint = h("div", { class: "hint" });
     const fileInput = h("input", { type: "file", accept: ".txt,.md,text/plain,text/markdown", hidden: true });
     fileInput.addEventListener("change", async () => {
@@ -1383,8 +1384,13 @@ export function visionView({ params, path }) {
       fileInput.value = "";
     });
     const run = async (apply) => {
+      let instruction = area.value.trim();
+      if (!instruction) {
+        instruction = EXAMPLE;
+        area.value = EXAMPLE;
+      }
       try {
-        const res = await api("/api/vision/rules/compose", { method: "POST", body: { instruction: area.value, apply, use_model: true } });
+        const res = await api("/api/vision/rules/compose", { method: "POST", body: { instruction, apply, use_model: true } });
         const d = res.draft;
         fill(
           hint,
@@ -1528,7 +1534,7 @@ export function visionView({ params, path }) {
                 "select",
                 { class: "select", onchange: (e) => (vlmModel = e.target.value) },
                 h("option", { value: "", selected: !vlmModel }, "默认视觉模型"),
-                ...visions.map((m) => h("option", { value: m.ref, selected: m.ref === vlmModel }, `${m.label}${m.vision ? "" : "（未标视觉）"}`)),
+                ...visions.map((m) => h("option", { value: m.ref, selected: m.ref === vlmModel }, `${m.label}${m.vision ? "" : "（未勾选视觉）"}`)),
               ),
             )
           : null,

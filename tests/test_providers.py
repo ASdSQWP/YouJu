@@ -8,10 +8,11 @@ import pytest
 from helpers import sse_response
 from youju.providers import http as provider_http
 from youju.providers.anthropic import AnthropicProvider
-from youju.providers.base import ProviderError, ToolCall, ToolSpec
+from youju.providers.base import ProviderError, ToolCall, ToolSpec, error_from_response
 from youju.providers.embeddings import Embedder
 from youju.providers.gemini import GeminiProvider
-from youju.providers.openai_compat import OpenAICompatProvider
+from youju.providers.openai_compat import OpenAICompatProvider, _usage
+from youju.providers.presets import PRESET_MAP
 from youju.providers.rerank import rerank
 
 SEARCH = ToolSpec("search_knowledge", "检索", {"type": "object", "properties": {"query": {"type": "string"}}})
@@ -99,7 +100,63 @@ def test_openai_missing_model_lists_installed(transport):
     transport(handler)
     with pytest.raises(ProviderError) as info:
         drain(OpenAICompatProvider("http://127.0.0.1:11434/v1").stream("qwen3:8b", [{"role": "user", "content": "hi"}]))
+    assert "Ollama" in str(info.value)
     assert "qwen3:8b" in str(info.value) and "huihui_ai/qwen3-abliterated:8b" in str(info.value)
+
+
+def test_ark_catalog_name_asks_for_endpoint(transport):
+    def handler(req):
+        if str(req.url).endswith("/models"):
+            return httpx.Response(
+                200,
+                json={"data": [{"id": "deepseek-r1-250120", "status": "Shutdown"}, {"id": "glm-4-5-air", "status": None}]},
+            )
+        return httpx.Response(
+            404,
+            json={"error": {"code": "InvalidEndpointOrModel.NotFound", "message": "The model or endpoint deepseek-r1-250120 does not exist or you do not have access to it."}},
+        )
+
+    transport(handler)
+    with pytest.raises(ProviderError) as info:
+        drain(OpenAICompatProvider("https://ark.cn-beijing.volces.com/api/v3", "ark-key").stream("deepseek-r1-250120", [{"role": "user", "content": "hi"}]))
+    text = str(info.value)
+    assert "接入点" in text and "ep-" in text
+    assert "里没有" not in text and "当前可用" not in text
+
+
+def test_agent_plan_has_no_model_catalog(transport):
+    transport(lambda req: httpx.Response(404, json={"error": {"message": "not found"}}))
+    with pytest.raises(ProviderError) as info:
+        asyncio.run(OpenAICompatProvider("https://ark.cn-beijing.volces.com/api/plan/v3", "ark-key").list_models())
+    assert "不提供模型列表" in str(info.value)
+
+
+def test_list_models_skips_retired_catalog_entries(transport):
+    transport(
+        lambda req: httpx.Response(
+            200,
+            json={"data": [{"id": "deepseek-r1-250120", "status": "Shutdown"}, {"id": "glm-4-5-air"}]},
+        )
+    )
+    names = asyncio.run(OpenAICompatProvider("https://ark.cn-beijing.volces.com/api/v3", "ark-key").list_models())
+    assert names == ["glm-4-5-air"]
+
+
+def test_ollama_cloud_disabled_is_explained(transport):
+    transport(lambda req: httpx.Response(403, json={"error": {"message": "ollama cloud is disabled: remote model is unavailable"}}))
+    with pytest.raises(ProviderError) as info:
+        drain(OpenAICompatProvider("http://127.0.0.1:11434/v1").stream("deepseek-v3.1:671b-cloud", [{"role": "user", "content": "hi"}]))
+    assert info.value.status == 403
+    assert "Ollama Cloud" in str(info.value) and "cloud" in str(info.value)
+
+
+def test_ark_invalid_key_mentions_inference_key():
+    err = error_from_response(
+        401,
+        b'{"error":{"message":"The API key or AK/SK in the request is missing or invalid."}}',
+    )
+    assert err.status == 401
+    assert "推理密钥" in str(err) and "Access Key" in str(err)
 
 
 def test_openai_error_message_and_azure_header(transport):
@@ -146,12 +203,16 @@ def test_anthropic_stream_and_wire(transport):
         {"role": "tool", "tool_call_id": "toolu_0", "content": "r1"},
         {"role": "user", "content": "继续"},
     ]
-    parts = drain(AnthropicProvider("https://api.anthropic.com/v1", "sk-ant").stream("claude-sonnet-4-5", messages, tools=[SEARCH], tool_choice="none"))
+    parts = drain(
+        AnthropicProvider("https://api.anthropic.com/v1", "sk-ant").stream(
+            "claude-sonnet-4-5", messages, tools=[SEARCH], tool_choice="none", max_tokens=256
+        )
+    )
     req = seen[0]
     body = json.loads(req.content)
     assert str(req.url) == "https://api.anthropic.com/v1/messages"
     assert req.headers["x-api-key"] == "sk-ant" and req.headers["anthropic-version"] == "2023-06-01"
-    assert body["system"] == "规则" and body["max_tokens"] > 0 and body["tool_choice"] == {"type": "none"}
+    assert body["system"] == "规则" and body["max_tokens"] == 256 and body["tool_choice"] == {"type": "none"}
     assert body["messages"][1]["content"][0]["type"] == "tool_use"
     assert [b["type"] for b in body["messages"][2]["content"]] == ["tool_result", "text"]
     assert body["tools"][0]["input_schema"]["properties"]["query"]["type"] == "string"
@@ -178,12 +239,13 @@ def test_gemini_stream_keeps_signature_for_replay(transport):
         )
     )
     messages = [{"role": "system", "content": "规则"}, {"role": "user", "content": "问"}]
-    parts = drain(GeminiProvider(api_key="g-key").stream("gemini-2.5-flash", messages, tools=[SEARCH, NOW]))
+    parts = drain(GeminiProvider(api_key="g-key").stream("gemini-2.5-flash", messages, tools=[SEARCH, NOW], max_tokens=512))
     req = seen[0]
     body = json.loads(req.content)
     assert str(req.url).endswith("/models/gemini-2.5-flash:streamGenerateContent?alt=sse")
     assert req.headers["x-goog-api-key"] == "g-key"
     assert body["systemInstruction"]["parts"][0]["text"] == "规则"
+    assert body["generationConfig"]["maxOutputTokens"] == 512
     declarations = body["tools"][0]["functionDeclarations"]
     assert "parameters" in declarations[0] and "parameters" not in declarations[1]
     assert [p.text for p in parts if p.kind == "reasoning"] == ["思考中"]
@@ -237,3 +299,57 @@ def test_rerank_cohere_and_dashscope(transport):
     assert rerank({"url": "https://s/v1/rerank", "model": "bge", "api_key": "k"}, "q", ["a", "b"], 2) == [(0, 0.8)]
     assert rerank({"url": "https://dashscope.x/rerank", "model": "gte", "api_key": "k", "format": "dashscope"}, "q", ["a", "b"], 2) == [(1, 0.9)]
     assert json.loads(seen[1].content)["input"] == {"query": "q", "documents": ["a", "b"]}
+
+
+def test_deepseek_preset_uses_current_official_models():
+    preset = PRESET_MAP["deepseek"]
+    assert preset["base_url"] == "https://api.deepseek.com"
+    models = {item["id"]: item for item in preset["models"]}
+    assert set(models) == {"deepseek-flash", "deepseek-v4-pro"}
+    assert models["deepseek-flash"]["tools"] and models["deepseek-v4-pro"]["tools"]
+    assert preset["stream_usage"] is True
+
+
+def test_deepseek_usage_fields_are_preserved():
+    assert _usage(
+        {
+            "prompt_tokens": 17,
+            "completion_tokens": 9,
+            "prompt_tokens_details": {"cached_tokens": 3},
+            "prompt_cache_hit_tokens": 3,
+            "prompt_cache_miss_tokens": 14,
+            "completion_tokens_details": {"reasoning_tokens": 4},
+        }
+    ) == {"input": 17, "output": 9, "cache_hit": 3, "cache_miss": 14, "reasoning": 4}
+
+
+def test_openai_usage_breakdown_and_max_tokens(transport):
+    seen = transport(
+        lambda req: sse_response(
+            {
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 17,
+                    "completion_tokens": 9,
+                    "prompt_tokens_details": {"cached_tokens": 3},
+                    "prompt_cache_hit_tokens": 3,
+                    "prompt_cache_miss_tokens": 14,
+                    "completion_tokens_details": {"reasoning_tokens": 4},
+                },
+            }
+        )
+    )
+    parts = drain(
+        OpenAICompatProvider("https://api.deepseek.com", "sk-test", stream_usage=True).stream(
+            "deepseek-flash", [{"role": "user", "content": "hi"}], max_tokens=2_048
+        )
+    )
+    body = json.loads(seen[0].content)
+    assert body["max_tokens"] == 2_048
+    assert next(part for part in parts if part.kind == "usage").usage == {
+        "input": 17,
+        "output": 9,
+        "cache_hit": 3,
+        "cache_miss": 14,
+        "reasoning": 4,
+    }

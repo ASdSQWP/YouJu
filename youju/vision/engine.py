@@ -27,9 +27,9 @@ VLM_REVIEW_MIN = 0.7
 VLM_TICK_EVERY = 5
 # 静态图：进入 live 后立即分析，之后按秒复检
 IMAGE_VLM_INTERVAL_SEC = 10.0
-# 同图同 finding 冷却，避免复检刷屏；不同 finding 可更快再告
-IMAGE_SAME_FINDING_COOLDOWN = 60
-IMAGE_NEW_FINDING_COOLDOWN = 8
+# 静态图：同一张图、同一检出项只告警一次，避免复检刷事件
+IMAGE_SAME_FINDING_COOLDOWN = 3600
+IMAGE_NEW_FINDING_COOLDOWN = 30
 
 
 def chat_ready(db: Session | None = None) -> bool:
@@ -332,26 +332,38 @@ def _push_event(db: Session, alert: DetectionAlert, source: VisionSource, rule: 
     if agent is None or not agent.allow_events:
         return
     evidence = list(getattr(alert, "evidence", None) or [])
+    if not evidence:
+        evidence = [
+            {
+                "id": item.get("id"),
+                "name": item.get("name"),
+                "reason": item.get("reason") or "",
+                "confidence": item.get("confidence"),
+            }
+            for item in (alert.boxes or [])
+            if isinstance(item, dict) and (item.get("reason") or item.get("from_image"))
+        ]
     code = (source.code or "").strip() or (source.filename or "").strip() or f"src-{source.id}"
+    data = {
+        "site": source.name,
+        "code": code,
+        "time": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S"),
+        "findings": alert.findings,
+        "confidence": {item["id"]: item.get("confidence") for item in (alert.boxes or []) if isinstance(item, dict) and item.get("id")},
+        "detector": alert.detector,
+        "rule": rule.name,
+        "evidence": evidence,
+        "alert_id": alert.id,
+    }
+    # 只有看图模型的告警才带截图；纯文字模型不推图片
+    if alert.snapshot_path:
+        data["snapshot_url"] = f"/api/vision/alerts/{alert.id}/snapshot"
     ev = Event(
         agent_id=agent.id,
         title=alert.title,
         level=alert.level,
         source=f"视觉检测 · {code if source.code else source.name}",
-        payload={
-            "data": {
-                "site": source.name,
-                "code": code,
-                "time": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S"),
-                "findings": alert.findings,
-                "confidence": {item["id"]: item.get("confidence") for item in (alert.boxes or [])},
-                "detector": alert.detector,
-                "rule": rule.name,
-                "evidence": evidence,
-                "snapshot_url": f"/api/vision/alerts/{alert.id}/snapshot" if alert.snapshot_path else "",
-                "alert_id": alert.id,
-            }
-        },
+        payload={"data": data},
         status="processing",
         created_by=source.owner_id,
     )
@@ -372,7 +384,10 @@ def _emit_alerts(
     event_ids: list[int] = []
     grouped: dict[int, list[dict]] = {}
     for hit in hits:
-        grouped.setdefault(int(hit["rule_id"]), []).append(hit)
+        rid = hit.get("rule_id")
+        if rid is None:
+            continue
+        grouped.setdefault(int(rid), []).append(hit)
     for rule_id, group in grouped.items():
         rule = next((r for r in rules if r.id == rule_id), None)
         if rule is None:
@@ -381,22 +396,23 @@ def _emit_alerts(
         if not _should_alert(db, rule, source, names):
             continue
         mode = rule.detector or "small"
-        if mode in ("vlm", "small_then_vlm"):
-            if not any(h.get("from_image") and h.get("reason") for h in group):
+        visual = mode in ("vlm", "small_then_vlm")
+        if visual:
+            # 演示相位、没看过画面的命中不能冒充大模型告警
+            group = [h for h in group if h.get("from_image") and h.get("reason") and not h.get("demo")]
+            if not group or not frame_jpeg:
                 continue
-            if not frame_jpeg:
-                continue
-        # 静态图仅小模型演示命中：不落真实告警，避免相位动画刷事件
-        if mode == "small" and is_static_image(source) and all(h.get("demo") for h in group):
+            names = [item["name"] for item in group]
+        elif is_static_image(source) and all(h.get("demo") for h in group):
+            continue
+        elif all(h.get("demo") for h in group) and mode != "small":
             continue
         evidence = [
             {"id": item["id"], "name": item["name"], "reason": item.get("reason") or "", "confidence": item.get("confidence")}
             for item in group
             if item.get("reason") or item.get("from_image")
         ]
-        snap = _save_snapshot(frame_jpeg, source.id, tick) if mode in ("vlm", "small_then_vlm") else ""
-        if not snap and frame_jpeg and source.kind == "file":
-            snap = _save_snapshot(frame_jpeg, source.id, tick)
+        snap = _save_snapshot(frame_jpeg, source.id, tick) if visual and frame_jpeg else ""
         alert = DetectionAlert(
             source_id=source.id,
             rule_id=rule.id,

@@ -81,6 +81,7 @@ class GeminiProvider:
         tools: list[ToolSpec] | None = None,
         temperature: float | None = None,
         tool_choice: str | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[StreamPart]:
         system, contents = self.wire(messages)
         body: dict = {"contents": contents}
@@ -96,8 +97,13 @@ class GeminiProvider:
             body["tools"] = [{"functionDeclarations": declarations}]
             if tool_choice == "none":
                 body["toolConfig"] = {"functionCallingConfig": {"mode": "NONE"}}
+        generation_config = {}
         if temperature is not None:
-            body["generationConfig"] = {"temperature": temperature}
+            generation_config["temperature"] = temperature
+        if max_tokens is not None:
+            generation_config["maxOutputTokens"] = max_tokens
+        if generation_config:
+            body["generationConfig"] = generation_config
         path = model if model.startswith("models/") else f"models/{model}"
         url = f"{self.base_url}/{path}:streamGenerateContent?alt=sse"
 

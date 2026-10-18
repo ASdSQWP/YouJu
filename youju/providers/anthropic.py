@@ -93,9 +93,15 @@ class AnthropicProvider:
         tools: list[ToolSpec] | None = None,
         temperature: float | None = None,
         tool_choice: str | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[StreamPart]:
         system, wire = self.wire(messages)
-        body: dict = {"model": model, "max_tokens": self.max_tokens, "messages": wire, "stream": True}
+        body: dict = {
+            "model": model,
+            "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,
+            "messages": wire,
+            "stream": True,
+        }
         if system:
             body["system"] = system
         if tools:

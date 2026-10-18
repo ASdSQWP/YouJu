@@ -49,6 +49,7 @@ class ChatProvider(Protocol):
         tools: list[ToolSpec] | None = None,
         temperature: float | None = None,
         tool_choice: str | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[StreamPart]: ...
 
     async def list_models(self) -> list[str]: ...
@@ -90,5 +91,11 @@ def error_from_response(status: int, body: bytes | str) -> ProviderError:
             detail = err
         elif obj.get("message"):
             detail = str(obj["message"])
+    if status == 401 and "ak/sk" in detail.lower():
+        return ProviderError(
+            "API Key 无效（HTTP 401）。请到火山方舟控制台「API Key 管理」重新复制推理密钥；"
+            "火山引擎账号的 Access Key / Secret Key 不能用于这个接口。",
+            status=401,
+        )
     hint = _HINTS.get(status) or ("模型服务暂时不可用" if status >= 500 else "请求被拒绝")
     return ProviderError(f"{hint}（HTTP {status}）：{detail[:300]}", status=status)

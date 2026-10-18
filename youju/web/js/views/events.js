@@ -208,8 +208,13 @@ export function eventsView({ params }) {
             alt: "告警截图",
             title: "点击放大",
             onclick: () => openImageLightbox(snap, "告警截图"),
+            onerror: (e) => {
+              e.currentTarget.replaceWith(h("p", { class: "muted" }, "这条告警没有可用的画面截图。"));
+            },
           })
-        : null,
+        : data.detector === "vlm" || data.detector === "small_then_vlm"
+          ? h("p", { class: "muted" }, "这条告警应由视觉模型附带截图，但当时没有保存画面。")
+          : null,
       evidence.length
         ? h(
             "ul",
