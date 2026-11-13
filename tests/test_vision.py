@@ -219,7 +219,11 @@ def test_yolo_without_weights_does_not_invent(tmp_path, monkeypatch):
     from youju.vision.engine import detect_frame
 
     monkeypatch.delenv("YOUJU_YOLO_MODEL", raising=False)
-    path = tmp_path / "scene.jpg"
+    from youju.config import settings
+
+    folder = settings.upload_dir / "vision" / "1"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "scene.jpg"
     Image.new("RGB", (40, 30), color=(8, 8, 8)).save(path, format="JPEG")
     src = VisionSource(
         id=5,
@@ -403,7 +407,11 @@ def test_detect_frame_defers_vlm_without_blocking_cache(tmp_path):
     from youju.models import DetectionRule, VisionSource
     from youju.vision.engine import detect_frame, _vlm_cache
 
-    path = tmp_path / "a.jpg"
+    from youju.config import settings
+
+    folder = settings.upload_dir / "vision" / "1"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "a.jpg"
     Image.new("RGB", (48, 32), color=(1, 2, 3)).save(path, format="JPEG")
     src = VisionSource(
         id=77,

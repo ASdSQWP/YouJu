@@ -69,7 +69,7 @@ def _ffmpeg_frame(path: Path, second: float = 0.0) -> bytes | None:
 def capture_jpeg(path: str | Path, tick: int = 0) -> bytes | None:
     """返回 JPEG 字节；失败返回 None。"""
     file = Path(path)
-    if not file.is_file():
+    if file.is_symlink() or not file.is_file():
         return None
     ext = file.suffix.lower()
     try:
@@ -91,8 +91,12 @@ def capture_jpeg(path: str | Path, tick: int = 0) -> bytes | None:
 
 
 def source_media_path(source) -> Path | None:
+    """只返回该点位拥有者上传目录内的普通文件。"""
     if getattr(source, "kind", None) != "file":
         return None
-    uri = getattr(source, "uri", None) or ""
-    path = Path(uri)
-    return path if path.is_file() else None
+    owner_id = getattr(source, "owner_id", None)
+    if isinstance(owner_id, bool) or not isinstance(owner_id, int) or owner_id <= 0:
+        return None
+    from youju.safepath import contained_file, vision_upload_root
+
+    return contained_file(vision_upload_root(owner_id), getattr(source, "uri", None) or "")

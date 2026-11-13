@@ -18,15 +18,14 @@ from collections.abc import AsyncIterator
 from contextlib import aclosing
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
-
+from youju.access import readable_kbs, shared_agent_kbs
 from youju.agent import prompts
 from youju.agent.citations import EMPTY_CHECK, normalize, strip_markers, used_numbers, verify
 from youju.agent.offline import extractive_answer, extractive_event, greeting
 from youju.agent.sources import SourceBook
 from youju.agent.tools import TOOL_TITLES, ToolBox, tool_specs
 from youju.db import SessionLocal
-from youju.models import Agent, KnowledgeBase
+from youju.models import Agent, User
 from youju.providers.base import ProviderError
 from youju.providers.registry import ModelInfo, resolve_chat
 from youju.rag.retrieve import retrieve
@@ -54,6 +53,8 @@ class AgentSnapshot:
     opening: str = ""
     suggestions: list[str] = field(default_factory=list)
     kb_ids: list[int] = field(default_factory=list)
+    owner_id: int = 0
+    visibility: str = "team"
     model_ref: str | None = None
     strategy: str = "rag"
     strict: bool = True
@@ -71,6 +72,8 @@ class AgentSnapshot:
             opening=agent.opening or "",
             suggestions=list(agent.suggestions or []),
             kb_ids=[int(k) for k in agent.kb_ids or []],
+            owner_id=int(agent.owner_id or 0),
+            visibility=agent.visibility or "team",
             model_ref=agent.model_ref,
             strategy=agent.strategy or "rag",
             strict=bool(agent.strict),
@@ -88,6 +91,9 @@ class RunInput:
     model_ref: str | None = None
     event: dict | None = None
     mcp_servers: list[dict] = field(default_factory=list)
+    viewer_id: int | None = None
+    # 事件报告会被所有能看这个智能体的人读到，不能按提交人的私有库权限展开
+    shared_output: bool = False
 
 
 class Run:
@@ -154,11 +160,15 @@ async def run(inp: RunInput) -> AsyncIterator[dict]:
     db = SessionLocal()
     try:
         provider, info = resolve_chat(db, inp.model_ref, inp.agent.model_ref)
-        rows = db.scalars(select(KnowledgeBase).where(KnowledgeBase.id.in_(inp.agent.kb_ids or [-1]))).all()
-        names = {kb.id: kb.name for kb in rows}
+        # 每次读库上的 visibility，知识库改成私有后下一次提问就撤权
+        if inp.shared_output:
+            allowed = shared_agent_kbs(db, inp.agent.owner_id, inp.agent.visibility, inp.agent.kb_ids)
+        else:
+            viewer = db.get(User, inp.viewer_id) if inp.viewer_id else None
+            allowed = readable_kbs(db, viewer, inp.agent.kb_ids)
     finally:
         db.close()
-    kbs = [(kid, names[kid]) for kid in inp.agent.kb_ids if kid in names]
+    kbs = [(kb.id, kb.name) for kb in allowed]
     r = Run(inp, info, _mode(provider, info, inp.agent, kbs))
     yield {"type": "meta", "mode": r.mode, "model": info.public()}
     try:
@@ -309,7 +319,11 @@ async def _offline(r: Run, kbs: list, smalltalk: bool) -> AsyncIterator[dict]:
     if smalltalk:
         text = greeting(inp.agent)
     elif not kbs:
-        text = NO_MODEL
+        if inp.agent.kb_ids:
+            text = EVENT_REFUSAL if inp.event else "当前账号不能访问这个智能体绑定的知识库，因此不能根据资料回答。"
+            r.refused = True
+        else:
+            text = NO_MODEL
     elif not len(r.book):
         text = EVENT_REFUSAL if inp.event else REFUSAL
         r.refused = True

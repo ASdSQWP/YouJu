@@ -30,9 +30,16 @@ def install_uploads(db: Session, user: User, agent: Agent | None, upload_ids: li
             continue
         ext = src.suffix.lower()
         if ext in WEIGHT_EXT:
+            if user.role != "admin":
+                notes.append(f"「{row.name}」未安装：视觉检测的全局配置只有管理员可以修改")
+                continue
             folder.mkdir(parents=True, exist_ok=True)
-            dest = folder / row.name
-            if dest.resolve() != src.resolve():
+            safe_name = Path(row.name).name
+            dest = (folder / safe_name).resolve()
+            if folder.resolve() not in dest.parents or dest.suffix.lower() not in WEIGHT_EXT:
+                notes.append(f"「{row.name}」文件名无效，未安装")
+                continue
+            if dest != src.resolve():
                 shutil.copyfile(src, dest)
             set_setting(db, "vision_yolo_path", str(dest))
             set_setting(db, "vision_small_model", f"yolo:{dest.name}")
@@ -51,15 +58,20 @@ def _apply_json(db: Session, user: User, agent: Agent | None, path: Path, name: 
     if not isinstance(data, dict):
         return [f"「{name}」需要是 JSON 对象，未写入"]
     notes = []
-    if data.get("small_model"):
-        set_setting(db, "vision_small_model", str(data["small_model"])[:80])
-        notes.append(f"视觉小模型已设为 {data['small_model']}")
-    if "vlm_model" in data:
-        set_setting(db, "vision_vlm_model", str(data.get("vlm_model") or "")[:160])
-        notes.append("看图大模型已按配置文件更新")
-    if data.get("yolo_path"):
-        set_setting(db, "vision_yolo_path", str(data["yolo_path"]).strip()[:500])
-        notes.append("YOLO 权重路径已按配置文件更新")
+    global_keys = ("small_model", "vlm_model", "yolo_path")
+    if any(key in data for key in global_keys):
+        if user.role != "admin":
+            notes.append("视觉检测的全局配置只有管理员可以修改，未写入")
+        else:
+            if data.get("small_model"):
+                set_setting(db, "vision_small_model", str(data["small_model"])[:80])
+                notes.append(f"视觉小模型已设为 {data['small_model']}")
+            if "vlm_model" in data:
+                set_setting(db, "vision_vlm_model", str(data.get("vlm_model") or "")[:160])
+                notes.append("看图大模型已按配置文件更新")
+            if data.get("yolo_path"):
+                set_setting(db, "vision_yolo_path", str(data["yolo_path"]).strip()[:500])
+                notes.append("YOLO 权重路径已按配置文件更新")
     ref = str(data.get("model_ref") or "").strip()
     if ref and agent is not None:
         if not can_edit(user, agent):
