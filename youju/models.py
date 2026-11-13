@@ -340,3 +340,81 @@ class DetectionAlert(Base):
     event_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="open", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class FaultCase(Base):
+    """仿真排障记录。不连接摄像机、对讲终端或生产系统。"""
+
+    __tablename__ = "fault_cases"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(80))
+    category: Mapped[str] = mapped_column(String(16), default="other")
+    phenomenon: Mapped[str] = mapped_column(Text, default="")
+    version: Mapped[str] = mapped_column(String(40), default="")
+    log_text: Mapped[str] = mapped_column(Text, default="")
+    kb_ids: Mapped[Any] = mapped_column(JSON, default=list)
+    simulated: Mapped[bool] = mapped_column(Boolean, default=True)
+    entry: Mapped[str] = mapped_column(String(16), default="人工录入")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class FaultDiagnosis(Base):
+    __tablename__ = "fault_diagnoses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("fault_cases.id", ondelete="CASCADE"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(16), default="inconclusive")
+    query: Mapped[str] = mapped_column(Text, default="")
+    observation: Mapped[str] = mapped_column(Text, default="")
+    evidence: Mapped[Any] = mapped_column(JSON, default=list)
+    candidates: Mapped[Any] = mapped_column(JSON, default=list)
+    speculation: Mapped[str] = mapped_column(Text, default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    verification: Mapped[Any] = mapped_column(JSON, nullable=True)
+    gate_reason: Mapped[str] = mapped_column(String(200), default="")
+    mode: Mapped[str] = mapped_column(String(16), default="offline")
+    model_ref: Mapped[str] = mapped_column(String(160), default="")
+    usage: Mapped[Any] = mapped_column(JSON, default=dict)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class FaultChange(Base):
+    __tablename__ = "fault_changes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("fault_cases.id", ondelete="CASCADE"), index=True)
+    diagnosis_id: Mapped[int | None] = mapped_column(ForeignKey("fault_diagnoses.id", ondelete="SET NULL"), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    problem: Mapped[str] = mapped_column(Text, default="")
+    sources: Mapped[Any] = mapped_column(JSON, default=list)
+    suggestion: Mapped[str] = mapped_column(Text, default="")
+    impact: Mapped[str] = mapped_column(Text, default="")
+    recovery: Mapped[str] = mapped_column(Text, default="")
+    checks: Mapped[Any] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    reviewer_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_note: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class FaultRegression(Base):
+    __tablename__ = "fault_regressions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("fault_cases.id", ondelete="CASCADE"), index=True)
+    change_id: Mapped[int] = mapped_column(ForeignKey("fault_changes.id", ondelete="CASCADE"), index=True)
+    change_version: Mapped[int] = mapped_column(Integer, default=1)
+    item: Mapped[str] = mapped_column(String(200))
+    result: Mapped[str] = mapped_column(String(16), default="untested")
+    note: Mapped[str] = mapped_column(Text, default="")
+    entry: Mapped[str] = mapped_column(String(16), default="人工录入")
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

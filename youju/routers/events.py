@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from youju.access import knowledge_visible, present_check, present_report, present_sources
 from youju.agent.runner import AgentSnapshot, RunInput, collect
 from youju.db import SessionLocal, get_db, utcnow
 from youju.deps import can_edit, can_read, current_user, get_agent, visible
@@ -175,7 +176,20 @@ def list_events(
         select(Event.status, func.count(Event.id)).where(Event.agent_id.in_(list(agents))).group_by(Event.status)
     ):
         counts[key] = count
-    return {"events": [event_public(e, agents.get(e.agent_id), brief=True) for e in rows], "counts": counts}
+    return {"events": [_public(db, user, e, agents.get(e.agent_id), brief=True) for e in rows], "counts": counts}
+
+
+def _public(db: Session, user: User, ev: Event, agent: Agent | None, brief: bool = False, alert=None) -> dict:
+    data = event_public(ev, agent, brief=brief, alert=alert)
+    visible_report = knowledge_visible(db, user, ev.sources, report_present=bool(ev.report))
+    data["check"] = present_check(data.get("check"), visible=visible_report)
+    data["redacted"] = not visible_report
+    if brief or visible_report:
+        return data
+    data["report"] = present_report(ev.report, visible=False)
+    data["sources"] = present_sources(db, user, ev.sources)
+    data["trace"] = [{"kind": "redacted", "title": "过程已隐藏", "status": "done"}]
+    return data
 
 
 def _event(db: Session, event_id: int, user: User) -> tuple[Event, Agent]:
@@ -189,7 +203,7 @@ def _event(db: Session, event_id: int, user: User) -> tuple[Event, Agent]:
 @router.get("/api/events/{event_id}")
 def get_event(event_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     ev, agent = _event(db, event_id, user)
-    return event_public(ev, agent, alert=_alert_for_event(db, ev.id))
+    return _public(db, user, ev, agent, alert=_alert_for_event(db, ev.id))
 
 
 @router.post("/api/events/{event_id}/review")
@@ -202,7 +216,7 @@ def review(event_id: int, body: ReviewBody, user: User = Depends(current_user), 
     ev.reviewer_id = user.id
     ev.reviewed_at = utcnow()
     db.commit()
-    return event_public(ev, agent, alert=_alert_for_event(db, ev.id))
+    return _public(db, user, ev, agent, alert=_alert_for_event(db, ev.id))
 
 
 @router.post("/api/events/{event_id}/conversation")
@@ -210,6 +224,7 @@ def follow_up(event_id: int, user: User = Depends(current_user), db: Session = D
     ev, agent = _event(db, event_id, user)
     if ev.status == "processing":
         raise HTTPException(status_code=400, detail="事件还在处理中")
+    view = _public(db, user, ev, agent, alert=_alert_for_event(db, ev.id))
     conv = Conversation(user_id=user.id, agent_id=agent.id, title=short_title(f"事件：{ev.title}"))
     db.add(conv)
     db.flush()
@@ -219,10 +234,10 @@ def follow_up(event_id: int, user: User = Depends(current_user), db: Session = D
         Message(
             conv_id=conv.id,
             role="assistant",
-            content=ev.report,
-            sources=ev.sources,
-            verification=ev.verification,
-            trace=ev.trace,
+            content=view["report"],
+            sources=view["sources"],
+            verification=view.get("check"),
+            trace=view.get("trace") or [],
             model_ref=ev.model_ref,
             model_label=ev.model_label,
             mode=ev.mode,
