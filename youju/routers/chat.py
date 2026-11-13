@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from youju.access import knowledge_visible, present_check, present_report, present_sources
 from youju.agent.citations import used_numbers
 from youju.agent.runner import AgentSnapshot, RunInput, run
 from youju.answers import new_state, save_answer, track
@@ -115,6 +116,25 @@ def conv_public(conv: Conversation, agent: Agent | None) -> dict:
     }
 
 
+def _present_message(db: Session, user: User, msg: Message) -> dict:
+    data = message_public(msg)
+    if msg.role != "assistant":
+        return data
+    visible = knowledge_visible(db, user, msg.sources, report_present=bool(msg.content and msg.sources))
+    # 没有来源的寒暄或拒答不藏。有来源但来源不完整或库已撤权时，整段回答不再出示。
+    if not msg.sources:
+        visible = True
+    if visible:
+        return data
+    data["content"] = present_report(msg.content, visible=False)
+    data["sources"] = present_sources(db, user, msg.sources)
+    data["check"] = present_check(data.get("check"), visible=False)
+    data["reasoning"] = ""
+    data["trace"] = []
+    data["redacted"] = True
+    return data
+
+
 def _own(db: Session, conv_id: int, user: User) -> Conversation:
     conv = db.get(Conversation, conv_id)
     if conv is None or conv.user_id != user.id:
@@ -151,7 +171,7 @@ def get_conversation(conv_id: int, user: User = Depends(current_user), db: Sessi
     conv = _own(db, conv_id, user)
     agent = db.get(Agent, conv.agent_id) if conv.agent_id else None
     msgs = db.scalars(select(Message).where(Message.conv_id == conv.id).order_by(Message.id)).all()
-    return {"conversation": conv_public(conv, agent), "messages": [message_public(m) for m in msgs]}
+    return {"conversation": conv_public(conv, agent), "messages": [_present_message(db, user, m) for m in msgs]}
 
 
 @router.patch("/api/conversations/{conv_id}")
@@ -303,12 +323,13 @@ def export(conv_id: int, user: User = Depends(current_user), db: Session = Depen
         if msg.role == "user":
             lines += ["## 提问", "", msg.content, ""]
             continue
-        lines += ["## 回答", "", msg.content, ""]
-        used = used_numbers(msg.content)
-        refs = [s for s in msg.sources or [] if s.get("n") in used]
+        shown = _present_message(db, user, msg)
+        lines += ["## 回答", "", shown["content"], ""]
+        used = used_numbers(shown["content"])
+        refs = [s for s in shown["sources"] or [] if s.get("n") in used or s.get("redacted")]
         if refs:
             lines += ["**参考资料**", ""]
-            lines += [f"- [{s['n']}] {s['filename']}" + (f" · {s['section']}" if s.get("section") else "") for s in refs]
+            lines += [f"- [{s.get('n') or '-'}] {s.get('filename') or '来源已不可见'}" + (f" · {s['section']}" if s.get("section") else "") for s in refs]
             lines.append("")
     filename = quote(f"{conv.title or '对话'}.md")
     return PlainTextResponse(
