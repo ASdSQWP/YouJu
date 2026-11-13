@@ -108,7 +108,7 @@ async def completions(body: CompletionBody, user: User = Depends(current_user), 
     db.flush()
     db.add(Message(conv_id=conv.id, role="user", content=question))
     db.commit()
-    inp = RunInput(agent=AgentSnapshot.of(agent), question=question, history=turns[:-1])
+    inp = RunInput(agent=AgentSnapshot.of(agent), question=question, history=turns[:-1], viewer_id=user.id)
     completion_id = f"chatcmpl-{uuid4().hex[:24]}"
     created = int(time.time())
     model_name = f"agent-{agent.id}"

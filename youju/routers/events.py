@@ -83,7 +83,9 @@ async def process_event(event_id: int) -> None:
     finally:
         db.close()
     try:
-        final = await collect(RunInput(agent=snapshot, question=payload["title"], event=payload))
+        final = await collect(
+            RunInput(agent=snapshot, question=payload["title"], event=payload, shared_output=True)
+        )
     except Exception as exc:  # noqa: BLE001
         log.exception("event %s failed", event_id)
         final = {"error": f"处理失败：{exc.__class__.__name__}"}

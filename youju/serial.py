@@ -135,7 +135,7 @@ def source_public(src, boxes=None, tick=0, owner=None, viewer=None) -> dict:
         "name": src.name,
         "code": src.code,
         "kind": src.kind,
-        "uri": src.uri,
+        "uri": "" if src.kind == "file" else src.uri,
         "scenario": src.scenario,
         "category": getattr(src, "category", None) or "other",
         "visibility": getattr(src, "visibility", None) or "private",

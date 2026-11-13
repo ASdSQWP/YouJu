@@ -243,7 +243,7 @@ async def _call(name: str, args: dict, user: User) -> tuple[str, dict]:
             db.close()
         if snapshot is None:
             raise ToolError(f"没有找到智能体：{target}")
-        final = await collect(RunInput(agent=snapshot, question=question))
+        final = await collect(RunInput(agent=snapshot, question=question, viewer_id=user.id))
         used = final.get("used") or []
         return (
             final.get("content", "") + references(final),

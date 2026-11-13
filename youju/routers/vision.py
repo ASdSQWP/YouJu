@@ -15,9 +15,10 @@ from sqlalchemy.orm import Session
 
 from youju.config import settings
 from youju.db import get_db, utcnow
-from youju.deps import current_user, get_agent, visible
+from youju.deps import admin_user, current_user, get_agent, visible
 from youju.models import Agent, DetectionAlert, DetectionRule, User, VisionFolder, VisionSource
 from youju.providers.registry import LOCAL_CHAT, get_setting, list_models, resolve_chat, set_setting
+from youju.safepath import alert_snapshot_root, contained_file, read_contained, vision_upload_root
 from youju.vision.yolo import list_small_models
 from youju.rag.ingest import safe_filename
 from youju.serial import alert_public, rule_public, source_public
@@ -261,13 +262,13 @@ def catalog(user: User = Depends(current_user), db: Session = Depends(get_db)):
         "algorithms": ALGORITHMS,
         "detectors": DETECTORS,
         "categories": CATEGORIES,
-        "small_models": list_small_models(),
         "vision_models": vision_models,
         "defaults": {
             "small_model": get_setting(db, "vision_small_model") or "demo",
             "vlm_model": get_setting(db, "vision_vlm_model") or "",
-            "yolo_path": get_setting(db, "vision_yolo_path") or "",
+            "yolo_path": (get_setting(db, "vision_yolo_path") or "") if user.role == "admin" else "",
         },
+        "small_models": [{k: v for k, v in item.items() if k != "path"} for item in list_small_models()],
     }
 
 
@@ -304,12 +305,22 @@ def list_sources(group: str | None = None, user: User = Depends(current_user), d
 def create_source(body: SourceBody, user: User = Depends(current_user), db: Session = Depends(get_db)):
     vis, shared = _normalize_visibility(body.visibility, body.shared_user_ids)
     scenario = body.scenario or "gate"
+    kind = body.kind if body.kind in ("demo", "file", "url") else "url"
+    if kind == "file":
+        stored = contained_file(vision_upload_root(user.id), body.uri)
+        if stored is None:
+            raise HTTPException(status_code=400, detail="只能引用自己上传目录里的文件")
+        uri = str(stored)
+    elif kind == "demo":
+        uri = body.uri.strip() if body.uri.strip().startswith("demo://") else ""
+    else:
+        uri = body.uri.strip()
     src = VisionSource(
         owner_id=user.id,
         name=body.name.strip(),
         code=body.code.strip(),
-        kind=body.kind if body.kind in ("demo", "file", "url") else "url",
-        uri=body.uri.strip(),
+        kind=kind,
+        uri=uri,
         scenario=scenario,
         category=_normalize_category(body.category, scenario),
         visibility=vis,
@@ -566,7 +577,7 @@ def batch_delete_sources(body: BatchSourcesBody, user: User = Depends(current_us
 
 
 @router.get("/api/vision/model-settings")
-def vision_model_settings(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def vision_model_settings(user: User = Depends(admin_user), db: Session = Depends(get_db)):
     return {
         "small_model": get_setting(db, "vision_small_model") or "demo",
         "yolo_path": get_setting(db, "vision_yolo_path") or "",
@@ -581,7 +592,7 @@ def vision_model_settings(user: User = Depends(current_user), db: Session = Depe
 
 
 @router.put("/api/vision/model-settings")
-def save_vision_model_settings(body: VisionModelSettingsBody, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def save_vision_model_settings(body: VisionModelSettingsBody, user: User = Depends(admin_user), db: Session = Depends(get_db)):
     set_setting(db, "vision_small_model", (body.small_model or "demo")[:80])
     set_setting(db, "vision_yolo_path", (body.yolo_path or "").strip()[:500])
     set_setting(db, "vision_vlm_model", (body.vlm_model or "").strip()[:160])
@@ -590,7 +601,7 @@ def save_vision_model_settings(body: VisionModelSettingsBody, user: User = Depen
 
 
 @router.post("/api/vision/model-settings/assist")
-async def assist_vision_model_settings(body: VisionAssistBody, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def assist_vision_model_settings(body: VisionAssistBody, user: User = Depends(admin_user), db: Session = Depends(get_db)):
     """用已接入的大模型根据描述建议小模型与看图模型，不直接落库。"""
     text = body.instruction.strip()
     suggestion = {
@@ -703,11 +714,11 @@ def source_media(source_id: int, user: User = Depends(current_user), db: Session
     src = _source(db, source_id, user)
     if src.kind != "file" or not src.uri:
         raise HTTPException(status_code=404, detail="这个点位没有上传文件")
-    path = Path(src.uri)
-    if not path.exists():
+    data = read_contained(vision_upload_root(src.owner_id), src.uri)
+    if data is None:
         raise HTTPException(status_code=404, detail="文件已经不在")
-    data = path.read_bytes()
-    return Response(data, media_type=src.mime or "application/octet-stream", headers={"Cache-Control": "no-store"})
+    media_type = src.mime if (src.mime or "").startswith(("image/", "video/")) else "application/octet-stream"
+    return Response(data, media_type=media_type, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @router.delete("/api/vision/sources/{source_id}")
@@ -905,9 +916,9 @@ def alert_snapshot(alert_id: int, user: User = Depends(current_user), db: Sessio
     source = db.get(VisionSource, alert.source_id) if alert else None
     if alert is None or source is None or not _can_view_source(source, user):
         raise HTTPException(status_code=404, detail="告警不存在")
-    path = Path(alert.snapshot_path or "")
-    if path.is_file():
-        return Response(path.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+    snap = read_contained(alert_snapshot_root(alert.source_id), alert.snapshot_path or "")
+    if snap:
+        return Response(snap, media_type="image/jpeg", headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
     # 旧告警可能没落盘截图：回退到源图片/视频抽帧，事件中心仍能看到画面
     media = source_media_path(source)
     jpeg = capture_jpeg(media, tick=int(alert.tick or 0)) if media else None

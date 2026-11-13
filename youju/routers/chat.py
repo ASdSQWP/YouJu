@@ -212,6 +212,7 @@ def chat(conv_id: int, body: ChatBody, user: User = Depends(current_user), db: S
         history=[{"role": m.role, "content": m.content} for m in history if m.role in ("user", "assistant")],
         model_ref=body.model,
         mcp_servers=servers,
+        viewer_id=user.id,
     )
     start = {"type": "start", "conversation_id": conv.id, "user_message_id": question.id, "title": conv.title}
     db.commit()

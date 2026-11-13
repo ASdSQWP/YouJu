@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from youju.db import get_db, iso
+from youju.access import readable_kbs
 from youju.deps import can_edit, can_read, current_user, get_agent, visible
 from youju.models import Agent, KnowledgeBase, User
 from youju.providers.registry import LOCAL_CHAT, find_model
@@ -51,9 +52,12 @@ class AgentBody(BaseModel):
 
 
 def agent_public(db: Session, agent: Agent, user: User, kb_names: dict[int, str] | None = None) -> dict:
+    # 只返回当前用户能读的库名。传入的映射也再滤一次，避免列表接口把私有库名称带出去。
+    allowed = {kb.id: kb.name for kb in readable_kbs(db, user, list(agent.kb_ids or []))}
     if kb_names is None:
-        rows = db.execute(select(KnowledgeBase.id, KnowledgeBase.name).where(KnowledgeBase.id.in_(agent.kb_ids or [-1])))
-        kb_names = {kid: name for kid, name in rows}
+        kb_names = allowed
+    else:
+        kb_names = {kid: name for kid, name in kb_names.items() if kid in allowed}
     model_label = None
     if agent.model_ref:
         _, info = find_model(db, agent.model_ref)
@@ -114,8 +118,7 @@ def _apply(agent: Agent, body: AgentBody) -> None:
 @router.get("/api/agents")
 def list_agents(user: User = Depends(current_user), db: Session = Depends(get_db)):
     agents = db.scalars(select(Agent).where(visible(Agent, user)).order_by(Agent.id)).all()
-    kb_names = {kid: name for kid, name in db.execute(select(KnowledgeBase.id, KnowledgeBase.name))}
-    return {"agents": [agent_public(db, agent, user, kb_names) for agent in agents]}
+    return {"agents": [agent_public(db, agent, user) for agent in agents]}
 
 
 @router.get("/api/agents/templates")
