@@ -10,6 +10,7 @@ import { eventsView } from "./views/events.js";
 import { dashboardView } from "./views/dashboard.js";
 import { settingsView } from "./views/settings.js";
 import { visionView } from "./views/vision.js?v=20261017a";
+import { faultsView } from "./views/faults.js?v=20261114b";
 
 const root = document.getElementById("app");
 
@@ -26,6 +27,8 @@ route("/vision", visionView);
 route("/vision/:id", visionView);
 route("/events", eventsView);
 route("/events/:id", eventsView);
+route("/faults", faultsView);
+route("/faults/:id", faultsView);
 route("/dashboard", dashboardView);
 route("/settings", settingsView);
 route("/settings/:tab", settingsView);
@@ -36,6 +39,7 @@ const NAV = [
   { path: "/kbs", label: "知识库", icon: "book" },
   { path: "/vision", label: "视觉检测", icon: "camera" },
   { path: "/events", label: "事件中心", icon: "inbox", badge: true },
+  { path: "/faults", label: "排障闭环", icon: "alert" },
   { path: "/dashboard", label: "运营看板", icon: "chart", admin: true },
   { path: "/settings", label: "设置", icon: "settings" },
 ];

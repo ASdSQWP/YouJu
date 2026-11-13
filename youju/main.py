@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from youju import __version__
 from youju.config import WEB_DIR
 from youju.db import init_db
-from youju.routers import agents, apikeys, auth, chat, evals, events, kbs, mcp, openai_api, providers, stats, users, vision
+from youju.routers import agents, apikeys, auth, chat, evals, events, faults, kbs, mcp, openai_api, providers, stats, users, vision
 from youju.startup import bootstrap
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -32,7 +32,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="有据 YouJu", version=__version__, lifespan=lifespan, redoc_url=None)
 
-for module in (auth, users, providers, kbs, agents, chat, events, evals, stats, apikeys, openai_api, mcp, vision):
+for module in (auth, users, providers, kbs, agents, chat, events, evals, stats, apikeys, openai_api, mcp, vision, faults):
     app.include_router(module.router)
 
 

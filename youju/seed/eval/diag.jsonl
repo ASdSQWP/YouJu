@@ -1,0 +1,7 @@
+{"id":"orig-stream","kind":"original","query":"监视画面突然黑屏，拉流中断，连续数秒没有视频帧，如何处置","expect_file":"视频断流处置.md","expect_section":"处置","expect_evidence":true,"expect_refuse":false}
+{"id":"orig-talk","kind":"original","query":"对讲没有声音，听得到对方但说出去没有回传，如何处置","expect_file":"对讲异常处置.md","expect_section":"处置","expect_evidence":true,"expect_refuse":false}
+{"id":"orig-ver","kind":"original","query":"客户端版本和服务端版本不一致，提示版本不匹配，如何处置","expect_file":"版本匹配说明.md","expect_section":"处置","expect_evidence":true,"expect_refuse":false}
+{"id":"para-stream","kind":"paraphrase","query":"视频流断了，屏幕一片黑，没有新的画面，该先做什么","expect_file":"视频断流处置.md","expect_evidence":true,"expect_refuse":false}
+{"id":"none-menu","kind":"no_answer","query":"食堂周五供应什么主食","expect_evidence":false,"expect_refuse":true}
+{"id":"wrong-frag","kind":"wrong_fragment","query":"拉流中断并且画面黑屏时先核对什么","expect_file":"视频断流处置.md","reject_file":"对讲异常处置.md","expect_evidence":true}
+{"id":"neg-talk","kind":"negation","query":"对讲没有声音的时候，是不是应当直接继续通话","expect_file":"对讲异常处置.md","expect_evidence":true,"expect_refuse":false,"must_cite_contains":"不得直接继续通话","must_not_conclude":"应当直接继续通话"}

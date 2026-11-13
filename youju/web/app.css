@@ -882,3 +882,7 @@ details[open] > summary .chev { transform: rotate(180deg); }
   .model-pick { max-width: 150px; }
   .composer-note { display: none; }
 }
+button.list-row { width: 100%; text-align: left; background: transparent; border: 0; cursor: pointer; color: inherit; font: inherit; }
+.fault-log { white-space: pre-wrap; background: var(--surface-2); padding: 10px 12px; border-radius: 8px; overflow: auto; }
+.fault-src { margin: 8px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+.fault-src p { margin: 6px 0 0; white-space: pre-wrap; }
